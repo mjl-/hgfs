@@ -1,5 +1,16 @@
 implement Readindex;
 
+# fix patching against a base that was before the latest base seen (probably involves properly reading specific revisions)
+# store vs data
+# requires?
+# when to look for .d?  my repo's don't have any
+# revlog revision & flags in .i?
+# flags in manifest?
+# steps to extract a repository revision?
+#	- have revision, read 00changelog.i to get nodeid of manifest
+#	- read 00manifest.i, find right nodeid, reconstruct manifest -> list of file+nodeids
+#	- for each file, read its .i, finding the right nodeid & reconstructing the file
+
 include "sys.m";
 	sys: Sys;
 include "draw.m";
