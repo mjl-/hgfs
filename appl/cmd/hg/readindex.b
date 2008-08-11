@@ -9,13 +9,26 @@ include "bufio.m";
 	Iobuf: import bufio;
 include "filter.m";
 	inflate: Filter;
+include "lists.m";
+	lists: Lists;
 
 
 print, sprint, fprint, fildes: import sys;
 
 dflag: int;
+pflag: int;
+mflag: int;
 
 Indexsize:	con 64;
+
+
+Hunk: adt {
+	start, end:	int;
+	buf: array of byte;
+
+	text:	fn(h: self ref Hunk): string;
+};
+
 
 Readindex: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -26,24 +39,27 @@ init(nil: ref Draw->Context, args: list of string)
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
 	bufio = load Bufio Bufio->PATH;
-	inflate = load Filter "inflate.dis";
+	lists = load Lists Lists->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] file");
+	arg->setusage(arg->progname()+" [-dpm] file");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	dflag++;
+		'p' =>	pflag++;
+		'm' =>	mflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();
 	if(len args != 1)
 		arg->usage();
 
-	file := hd args;
-	b := bufio->open(file, Bufio->OREAD);
+	path := hd args;
+	b := bufio->open(path, Bufio->OREAD);
 	o := big 0;
+	base := array[0] of byte;
 	for(i := 0;; i++) {
 		say(sprint("reading from offset %bd", o));
 		buf := array[Indexsize] of byte;
@@ -62,44 +78,143 @@ init(nil: ref Draw->Context, args: list of string)
 		print("index: %s\n", ix.text());
 		o += big Indexsize;
 
-		if(1) {
-		
-		say(sprint("reading from offset %bd", o));
-		b.seek(o, Bufio->SEEKSTART);
-		defl := array[ix.csize] of byte;
-		n = b.read(defl, len defl);
-		if(n != len defl)
-			fail(sprint("reading data after index entry: %r"));
+		if(pflag || mflag) {
+			say(sprint("reading from offset %bd", o));
+			b.seek(o, Bufio->SEEKSTART);
+			defl := array[ix.csize] of byte;
+			n = b.read(defl, len defl);
+			if(n != len defl)
+				fail(sprint("reading data after index entry: %r"));
 
-		sys->remove("/usr/mjl/tmp/blahbuf");
-		fd := sys->create("/usr/mjl/tmp/blahbuf", Sys->OWRITE, 8r666);
-		if(fd == nil)
-			fail(sprint("open blahbuf: %r"));
-		if(sys->write(fd, defl, len defl) != len defl)
-			fail(sprint("writing defl...: %r"));
+			raw: array of byte;
+			if(len defl != 0) {
+				case int defl[0] {
+				'u' =>
+					raw = defl[1:];
+				0 =>
+					raw = defl;
+				* =>
+					derr: string;
+					(raw, derr) = inflatebuf(defl[2:len defl]);
+					if(derr != nil)
+						fail("inflating data after header: "+derr);
+				}
+			} else
+				raw = array[0] of byte;
 
-		raw: array of byte;
-		if(len defl != 0) {
-			case int defl[0] {
-			'u' =>
-				raw = defl[1:];
-			0 =>
-				raw = defl;
-			* =>
-				derr: string;
-				(raw, derr) = inflatebuf(defl[2:len defl]);
-				if(derr != nil)
-					fail("inflating data after header: "+derr);
+			sys->remove("/usr/mjl/tmp/blahbuf");
+			fd := sys->create("/usr/mjl/tmp/blahbuf", Sys->OWRITE, 8r666);
+			if(fd == nil)
+				fail(sprint("create blahbuf: %r"));
+			if(sys->write(fd, raw, len raw) != len raw)
+				fail(sprint("writing defl...: %r"));
+
+			if(pflag) {
+				print("## data start (%d bytes)\n", len raw);
+				print("%s\n", string raw);
+				print("## data end\n");
 			}
-		} else
-			raw = array[0] of byte;
-		print("## data start (%d bytes)\n", len raw);
-		print("%s\n", string raw);
-		print("## data end\n");
+
+			if(mflag) {
+				print("as manifest:\n");
+				d: array of byte;
+				if(ix.base != ix.link) {
+					print("diff\n");
+					(hunks, herr) := decode(raw);
+					if(herr != nil) {
+						print("error decoding patch: %s\n", herr);
+					} else {
+						for(l := hunks; l != nil; l = tl l) {
+							h := hd l;
+							print("hunk: %s\n", h.text());
+						}
+						d = apply(base, hunks);
+					}
+				} else {
+					print("full copy...\n");
+					d = raw;
+				}
+				base = d;
+
+				line: array of byte;
+				while(len d > 0) {
+					(line, d) = split(d, byte '\n');
+					(file, nodeid) := split(line, byte '\0');
+					if(len nodeid > 40) {
+						print("long: %s\n", hex(line));
+						print("nodeid=%q file=%q\n", hex(nodeid[:40]), string file);
+						print("end=%q\n", string nodeid[40:]);
+					} else
+						print("nodeid=%q file=%q\n", string nodeid, string file);
+				}
+			}
 		}
 
 		o += big ix.csize;
 	}
+}
+
+Hunk.text(h: self ref Hunk): string
+{
+	return sprint("<hunk s=%d e=%d buf=%s length=%d>", h.start, h.end, string h.buf, len h.buf);
+}
+
+apply(d: array of byte, l: list of ref Hunk): array of byte
+{
+	off := 0;
+	for(; l != nil; l = tl l) {
+		h := hd l;
+		del := h.end-h.start;
+		add := len h.buf;
+		diff := add-del;
+
+		s := h.start+off;
+		e := h.end+off;
+		nd := array[len d+diff] of byte;
+		nd[:] = d[:s];
+		nd[s:] = h.buf;
+		nd[s+len h.buf:] = d[e:];
+		d = nd;
+
+		off += diff;
+	}
+	return d;
+}
+
+merge(l: list of list of ref Hunk): list of ref Hunk
+{
+	return hd l; # xxx implement
+}
+
+decode(d: array of byte): (list of ref Hunk, string)
+{
+	o := 0;
+	l: list of ref Hunk;
+	print("decode, buf %s\n", hex(d));
+	while(o+12 < len d) {
+		start, end, length: int;
+		(start, o) = g32(d, o);
+		(end, o) = g32(d, o);
+		(length, o) = g32(d, o);
+		say(sprint("s %d e %d l %d", start, end, length));
+		if(start > end)
+			return (nil, "bad data, start > end");
+		if(o+length > len d)
+			return (nil, "bad data, hunk points past buffer");
+		buf := array[length] of byte;
+		buf[:] = d[o:o+length];
+		l = ref Hunk(start, end, buf)::l;
+		o += length;
+	}
+	return (lists->reverse(l), nil);
+}
+
+split(buf: array of byte, b: byte): (array of byte, array of byte)
+{
+	for(i := 0; i < len buf; i++)
+		if(buf[i] == b)
+			return (buf[:i], buf[i+1:]);
+	return (buf, array[0] of byte);
 }
 
 
