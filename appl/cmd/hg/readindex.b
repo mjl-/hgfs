@@ -11,6 +11,9 @@ include "filter.m";
 	inflate: Filter;
 include "lists.m";
 	lists: Lists;
+include "keyring.m";
+	keyring: Keyring;
+	DigestState: import keyring;
 
 
 print, sprint, fprint, fildes: import sys;
@@ -20,6 +23,8 @@ pflag: int;
 mflag: int;
 
 Indexsize:	con 64;
+Nullnode:	con -1;
+nullnode:	array of byte;
 
 
 Hunk: adt {
@@ -40,8 +45,11 @@ init(nil: ref Draw->Context, args: list of string)
 	arg := load Arg Arg->PATH;
 	bufio = load Bufio Bufio->PATH;
 	lists = load Lists Lists->PATH;
+	keyring = load Keyring Keyring->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
+
+	nullnode = array[20] of {* => byte 0};
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dpm] file");
@@ -74,6 +82,7 @@ init(nil: ref Draw->Context, args: list of string)
 		(ix, err) := Index.parse(buf);
 		if(err != nil)
 			fail("parsing index entry: "+err);
+		add(i, ix.nodeid);
 
 		print("index: %s\n", ix.text());
 		o += big Indexsize;
@@ -102,14 +111,6 @@ init(nil: ref Draw->Context, args: list of string)
 			} else
 				raw = array[0] of byte;
 
-			sys->remove("/usr/mjl/tmp/blahbuf");
-			fd := sys->create("/usr/mjl/tmp/blahbuf", Sys->OWRITE, 8r666);
-			if(fd == nil)
-				fail(sprint("create blahbuf: %r"));
-			if(sys->write(fd, raw, len raw) != len raw)
-				fail(sprint("writing defl...: %r"));
-
-
 			d: array of byte;
 			if(ix.base != ix.link) {
 				print("diff (base %d, link %d)...\n", ix.base, ix.link);
@@ -128,6 +129,14 @@ init(nil: ref Draw->Context, args: list of string)
 				d = raw;
 			}
 			base = d;
+
+			par1 := lookup(ix.p1);
+			par2 := lookup(ix.p2);
+			if(par1 == nil || par2 == nil)
+				fail("could not find parent nodeid");
+			node := mknodeid(d, par1, par2);
+			if(hex(node) != hex(ix.nodeid))
+				fail(sprint("nodeid mismatch, have %s, header claims %s", hex(node), hex(ix.nodeid)));
 
 			if(pflag) {
 				print("## data start (%d bytes)\n", len d);
@@ -153,6 +162,51 @@ init(nil: ref Draw->Context, args: list of string)
 
 		o += big ix.csize;
 	}
+}
+
+parents: list of (int, array of byte);
+lookup(parent: int): array of byte
+{
+	if(parent == Nullnode)
+		return nullnode;
+
+	for(l := parents; l != nil; l = tl l) {
+		(p, nodeid) := hd l;
+		if(p == parent)
+			return nodeid;
+	}
+	return nil;
+}
+
+add(parent: int, nodeid: array of byte)
+{
+	parents = (parent, nodeid)::parents;
+}
+
+cmp(p1, p2: array of byte): int
+{
+	for(i := 0; i < len p1; i++)
+		if(p1[i] < p2[i])
+			return -1;
+		else if(p1[i] > p2[i])
+			return 1;
+	return 0;
+}
+
+mknodeid(d, p1, p2: array of byte): array of byte
+{
+
+	if(cmp(p1, p2) > 0)
+		(p1, p2) = (p2, p1);
+
+	state: ref DigestState;
+	state = keyring->sha1(p1, len p1, nil, state);
+	state = keyring->sha1(p2, len p2, nil, state);
+	state = keyring->sha1(d, len d, nil, state);
+
+	hash := array[Keyring->SHA1dlen] of byte;
+	keyring->sha1(nil, 0, hash, state);
+	return hash;
 }
 
 Hunk.text(h: self ref Hunk): string
@@ -246,8 +300,11 @@ Index.parse(buf: array of byte): (ref Index, string)
 	(ix.link, o) = g32(buf, o);
 	(ix.p1, o) = g32(buf, o); # xxx set to ffffffff?
 	(ix.p2, o) = g32(buf, o); # idem
-	ix.nodeid = array[len buf-o] of byte;
-	ix.nodeid[:] = buf[o:];
+	ix.nodeid = array[20] of byte;
+	ix.nodeid[:] = buf[o:o+20];
+	o += 20;
+	if(len buf-o != 12)
+		return (nil, "wrong number of superfluous bytes");
 	
 	return (ix, nil);
 }
