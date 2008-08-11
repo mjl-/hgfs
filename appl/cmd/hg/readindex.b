@@ -109,33 +109,34 @@ init(nil: ref Draw->Context, args: list of string)
 			if(sys->write(fd, raw, len raw) != len raw)
 				fail(sprint("writing defl...: %r"));
 
+
+			d: array of byte;
+			if(ix.base != ix.link) {
+				print("diff (base %d, link %d)...\n", ix.base, ix.link);
+				(hunks, herr) := decode(raw);
+				if(herr != nil) {
+					print("error decoding patch: %s\n", herr);
+				} else {
+					for(l := hunks; l != nil; l = tl l) {
+						h := hd l;
+						print("hunk: %s\n", h.text());
+					}
+					d = apply(base, hunks);
+				}
+			} else {
+				print("full copy (base %d)...\n", ix.base);
+				d = raw;
+			}
+			base = d;
+
 			if(pflag) {
-				print("## data start (%d bytes)\n", len raw);
-				print("%s\n", string raw);
+				print("## data start (%d bytes)\n", len d);
+				print("%s\n", string d);
 				print("## data end\n");
 			}
 
 			if(mflag) {
 				print("as manifest:\n");
-				d: array of byte;
-				if(ix.base != ix.link) {
-					print("diff\n");
-					(hunks, herr) := decode(raw);
-					if(herr != nil) {
-						print("error decoding patch: %s\n", herr);
-					} else {
-						for(l := hunks; l != nil; l = tl l) {
-							h := hd l;
-							print("hunk: %s\n", h.text());
-						}
-						d = apply(base, hunks);
-					}
-				} else {
-					print("full copy...\n");
-					d = raw;
-				}
-				base = d;
-
 				line: array of byte;
 				while(len d > 0) {
 					(line, d) = split(d, byte '\n');
