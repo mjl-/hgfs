@@ -1,8 +1,6 @@
 <../mkconfig
 
-MODS=
+MODS=\
+	mercurial.m\
 
 <mkmod
-
-nuke:QV:
-	

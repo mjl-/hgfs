@@ -1,11 +1,11 @@
 implement Readindex;
 
+# do filename escaping (_'s) (only when using store)
+# requires?  to detect "store" and "revlogv1"
 # fix patching against a base that was before the latest base seen (probably involves properly reading specific revisions)
-# store vs data
-# requires?
-# when to look for .d?  my repo's don't have any
+# when to look for .d?  my repo's don't have any...
 # revlog revision & flags in .i?
-# flags in manifest?
+# flags in manifest?  what about permissions?
 # steps to extract a repository revision?
 #	- have revision, read 00changelog.i to get nodeid of manifest
 #	- read 00manifest.i, find right nodeid, reconstruct manifest -> list of file+nodeids
@@ -25,6 +25,10 @@ include "lists.m";
 include "keyring.m";
 	keyring: Keyring;
 	DigestState: import keyring;
+include "string.m";
+	str: String;
+include "mercurial.m";
+	mercurial: Mercurial;
 
 
 print, sprint, fprint, fildes: import sys;
@@ -36,7 +40,6 @@ mflag: int;
 Indexsize:	con 64;
 Nullnode:	con -1;
 nullnode:	array of byte;
-
 
 Hunk: adt {
 	start, end:	int;
@@ -57,8 +60,11 @@ init(nil: ref Draw->Context, args: list of string)
 	bufio = load Bufio Bufio->PATH;
 	lists = load Lists Lists->PATH;
 	keyring = load Keyring Keyring->PATH;
+	str = load String String->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
+
+	mercurial = load Mercurial Mercurial->PATH;
 
 	nullnode = array[20] of {* => byte 0};
 
@@ -219,6 +225,113 @@ mknodeid(d, p1, p2: array of byte): array of byte
 	keyring->sha1(nil, 0, hash, state);
 	return hash;
 }
+
+
+Revlog.open(path: string): (ref Revlog, string)
+{
+	rl := ref Revlog(path, nil, 0);
+	rl.fd = sys->open(path, Sys->OREAD);
+	if(rl.fd == nil)
+		return (nil, sprint("open %q: %r", path));
+	return (rl, nil);
+}
+
+Revlog.isindexonly(r: self Revlog): int
+{
+	return 1; # todo
+}
+
+Repo.open(path: string): (ref Repo, string)
+{
+	reqpath := path+"/requires";
+	b := bufio->open(reqpath, Bufio->OREAD);
+	if(b == nil)
+		return (nil, sprint("repo \"requires\" file: %r"));
+	requires: list of string;
+	for(;;) {
+		l := b.gets('\n');
+		if(l == nil)
+			break;
+		if(l[len l-1] == '\n')
+			l = l[:len l-1];
+		requires = l::requires;
+	}
+
+	repo := ref Repo(path, requires);
+	if(repo.isstore() && !isdir(path+"/store"))
+		return (nil, "missing directory \".hg/store\"");
+	if(!repo.isstore() && !isdir(path+"/data"))
+		return (nil, "missing directory \".hg/data\"");
+	return (repo, nil);
+}
+
+Repo.find(path: string): (ref Repo, string)
+{
+	if(path == nil)
+		path = workdir();
+
+	while(path != nil) {
+		while(path != nil && path[len path-1] == '/')
+			path = path[:len path-1];
+
+		hgpath := path+"/.hg";
+		if(exists(hgpath))
+			return Repo.open(hgpath);
+
+		(path, nil) = str->splitstrr(path, "/");
+	}
+	return (nil, "no repo found");
+}
+
+Repo.isstore(r: self ref Repo): int
+{
+	return has(r.requires, "store");
+}
+
+Repo.isrevlogv1(r: self ref Repo): int
+{
+	return has(r.requires, "revlogv1");
+}
+
+Repo.escape(r: self ref Repo, path: string): string
+{
+	if(!r.isstore())
+		return path;
+
+	fa := array of byte path;
+	res: string;
+	for(i := 0; i < len fa; i++) {
+		case int fa[i] {
+		'_' =>
+			res += "__";
+		'A' to 'Z' =>
+			res[len res] = '_';
+			res[len res] = int fa[i]+'a'-'A';
+		126 to 255 or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' =>
+			res[len res] = '~';
+			res += sprint("%02x", int fa[i]);
+		* =>
+			res[len res] = int fa[i];
+		}
+	}
+	return res;
+}
+
+Repo.datadir(r: self ref Repo): string
+{
+	if(r.isstore())
+		return r.path+"/store/data";
+	return r.path+"/data";
+}
+
+Repo.openrevlog(r: self ref Repo, path: string): (ref Revlog, string)
+{
+	path = r.escape(path);
+	path = r.datadir()+"/"+path;
+	return Revlog.open(path);
+}
+
+
 
 Hunk.text(h: self ref Hunk): string
 {
@@ -395,6 +508,32 @@ g48(d: array of byte, o: int): (big, int)
 	return (big g16(d, o).t0<<32|big g16(d, o+2).t0<<16|big g16(d, o+4).t0, o+6);
 }
 
+has(l: list of string, e: string): int
+{
+	for(; l != nil; l = tl l)
+		if(hd l == e)
+			return 1;
+	return 0;
+}
+
+exists(path: string): int
+{
+	return sys->stat(path).t0 == 0;
+}
+
+isdir(path: string): int
+{
+	(ok, dir) := sys->stat(path);
+	return ok == 0 && dir.mode & Sys->DMDIR;
+}
+
+workdir(): string
+{
+	fd := sys->open(".", Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	return sys->fd2path(fd);
+}
 
 say(s: string)
 {

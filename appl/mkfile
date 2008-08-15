@@ -2,7 +2,6 @@
 
 DIRS=\
 	cmd\
-	#lib\
-	#wm\
+	lib\
 
 <$ROOT/mkfiles/mksubdirs

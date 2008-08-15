@@ -2,7 +2,8 @@
 
 
 TARG=\
-	readindex.dis\
+	get.dis\
+	#readindex.dis\
 
 SYSMODULES=\
 	arg.m\
@@ -13,6 +14,6 @@ SYSMODULES=\
 	string.m\
 	sys.m\
 
-DISBIN=$ROOT/dis/hg/
+DISBIN=$ROOT/dis/hg
 
 <$ROOT/mkfiles/mkdis
