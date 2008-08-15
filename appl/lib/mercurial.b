@@ -4,6 +4,7 @@ implement Mercurial;
 # - when to look for .d?  my repo's don't have any...
 # - revlog revision & flags in .i?
 # - flags in manifest?  like file mode (permissions)?
+# - long entries in manifest?
 
 include "sys.m";
 	sys: Sys;
@@ -44,20 +45,20 @@ init()
 	nullnode = ref Nodeid(array[20] of {* => byte 0});
 }
 
-mknodeid(d: array of byte, p1, p2: ref Nodeid): array of byte
+Nodeid.create(d: array of byte, n1, n2: ref Nodeid): ref Nodeid
 {
 
-	if(Nodeid.cmp(p1, p2) > 0)
-		(p1, p2) = (p2, p1);
+	if(Nodeid.cmp(n1, n2) > 0)
+		(n1, n2) = (n2, n1);
 
 	state: ref DigestState;
-	state = keyring->sha1(p1.d[:20], 20, nil, state);
-	state = keyring->sha1(p2.d[:20], 20, nil, state);
+	state = keyring->sha1(n1.d[:20], 20, nil, state);
+	state = keyring->sha1(n2.d[:20], 20, nil, state);
 	state = keyring->sha1(d, len d, nil, state);
 
 	hash := array[Keyring->SHA1dlen] of byte;
 	keyring->sha1(nil, 0, hash, state);
-	return hash;
+	return ref Nodeid(hash);
 }
 
 
@@ -112,8 +113,10 @@ Change.parse(data: array of byte): (ref Change, string)
 	if(l == nil)
 		return (nil, "missing timestamp");
 	(t, tzoff) := str->splitstrl(l, " ");
+	if(tzoff == nil || str->drop(t, "0-9") != nil || str->drop(t, "0-9-") != nil)
+		return (nil, "invalid timestamp/timezone");
 	c.when = int t;
-	c.tzoff = int tzoff[1:];  # xxx verify data
+	c.tzoff = int tzoff[1:]; 
 
 	for(;;) {
 		l = getline(b);
@@ -326,7 +329,7 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 		return (nil, "base: "+derr);
 
 	for(i := e.base+1; i <= e.rev; i++) {
-		(nil, diff, err) := rl.getrev(i);
+		(diff, err) := getentryrev(rl, i);
 		if(err != nil)
 			return (nil, "diff: "+err);
 
@@ -343,9 +346,9 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 		par2 := lookup(rl, e.p2);
 		if(par1 == nil || par2 == nil)
 			return (nil, "could not find parent nodeid");
-		node := mknodeid(d, par1, par2); # xxx make it return Nodeid.  make function part of adt
-		if(hex(node) != e.nodeid.text())
-			return (nil, sprint("nodeid mismatch, have %s, header claims %s", hex(node), e.nodeid.text()));
+		node := Nodeid.create(d, par1, par2);
+		if(Nodeid.cmp(node, e.nodeid))
+			return (nil, sprint("nodeid mismatch, have %s, header claims %s", node.text(), e.nodeid.text()));
 	}
 	return (d, nil);
 }
@@ -430,7 +433,6 @@ Repo.isrevlogv1(r: self ref Repo): int
 	return has(r.requires, "revlogv1");
 }
 
-# xxx have to split path at / and escape individual parts
 Repo.escape(r: self ref Repo, path: string): string
 {
 	if(!r.isstore())
@@ -478,7 +480,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	(cl, clerr) := Revlog.open(clpath);
 	if(clerr != nil)
 		return (nil, nil, clerr);
-	(ce, cdata, clderr) := cl.getrev(rev);
+	(nil, cdata, clderr) := cl.getrev(rev);
 	if(clderr != nil)
 		return (nil, nil, clderr);
 
@@ -493,7 +495,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	if(mrlerr != nil)
 		return (nil, nil, mrlerr);
 	
-	(me, mdata, mderr) := mrl.getnodeid(c.manifestnodeid);
+	(nil, mdata, mderr) := mrl.getnodeid(c.manifestnodeid);
 	if(mderr != nil)
 		return (nil, nil, mderr);
 
@@ -511,7 +513,7 @@ Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byt
 	(rl, rlerr) := Revlog.open(rlpath);
 	if(rlerr != nil)
 		return (nil, rlerr);
-	(e, data, derr) := rl.getnodeid(nodeid);
+	(nil, data, derr) := rl.getnodeid(nodeid);
 	if(derr != nil)
 		return (nil, derr);
 	return (data, nil);

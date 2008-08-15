@@ -8,6 +8,7 @@ Mercurial: module {
 	Nodeid: adt {
 		d:	array of byte;
 
+		create:	fn(d: array of byte, n1, n2: ref Nodeid): ref Nodeid;
 		text:	fn(n: self ref Nodeid): string;
 		cmp:	fn(n1, n2: ref Nodeid): int;
 	};
