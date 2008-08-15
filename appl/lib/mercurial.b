@@ -5,6 +5,7 @@ implement Mercurial;
 # - revlog revision & flags in .i?
 # - flags in manifest?  like file mode (permissions)?
 # - long entries in manifest?
+# - keep track of entries while reading revlog index, so we can read base+updates without constantly reading the index
 
 include "sys.m";
 	sys: Sys;
@@ -151,7 +152,7 @@ Change.text(c: self ref Change): string
 	when := daytime->gmt(c.when);
 	when.tzoff = c.tzoff;
 	s += sprint("date: %s\n", daytime->text(when));
-	s += sprint("files changes:\n");
+	s += sprint("files changed:\n");
 	for(l := c.files; l != nil; l = tl l)
 		s += sprint("%s\n", hd l);
 	s += sprint("\n");
@@ -265,7 +266,7 @@ findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
 		if(nodeid != nil && Nodeid.cmp(e.nodeid, nodeid) == 0)
 			return (e, nil);
 	}
-	return (nil, "internal error");
+	return (nil, "no such revision");
 }
 
 Revlog.findrev(rl: self ref Revlog, rev: int): (ref Entry, string)
@@ -342,14 +343,16 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 			say(sprint("hunk: %s", (hd l).text()));
 		d = apply(d, hunks);
 
-		par1 := lookup(rl, e.p1);
-		par2 := lookup(rl, e.p2);
-		if(par1 == nil || par2 == nil)
-			return (nil, "could not find parent nodeid");
-		node := Nodeid.create(d, par1, par2);
-		if(Nodeid.cmp(node, e.nodeid))
-			return (nil, sprint("nodeid mismatch, have %s, header claims %s", node.text(), e.nodeid.text()));
 	}
+
+	par1 := lookup(rl, e.p1);
+	par2 := lookup(rl, e.p2);
+	if(par1 == nil || par2 == nil)
+		return (nil, "could not find parent nodeid");
+	node := Nodeid.create(d, par1, par2);
+	if(Nodeid.cmp(node, e.nodeid))
+		return (nil, sprint("nodeid mismatch, have %s, header claims %s", node.text(), e.nodeid.text()));
+
 	return (d, nil);
 }
 

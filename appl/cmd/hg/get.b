@@ -55,8 +55,15 @@ init(nil: ref Draw->Context, args: list of string)
 		fail(merr);
 	say("have change & manifest");
 
-	if(vflag)
+	if(vflag) {
 		sys->print("%s\n", change.text());
+		sys->print("manifest:\n");
+		for(l := manifest.files; l != nil; l = tl l) {
+			file := hd l;
+			sys->print("%s %q\n", file.nodeid.text(), file.path);
+		}
+		sys->print("\n");
+	}
 
 	for(l := manifest.files; l != nil; l = tl l) {
 		file := hd l;
