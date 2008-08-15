@@ -5,8 +5,8 @@ include "sys.m";
 	sprint: import sys;
 include "draw.m";
 include "arg.m";
-include "daytime.m";
-	daytime: Daytime;
+include "string.m";
+	str: String;
 include "mercurial.m";
 	mercurial: Mercurial;
 	Revlog, Repo, Nodeid, Change: import mercurial;
@@ -22,7 +22,7 @@ init(nil: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
-	daytime = load Daytime Daytime->PATH;
+	str = load String String->PATH;
 	mercurial = load Mercurial Mercurial->PATH;
 	mercurial->init();
 
@@ -73,8 +73,40 @@ init(nil: ref Draw->Context, args: list of string)
 			fail(derr);
 		say("file read...");
 		sys->print("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len data);
-		# write data to file
+
+		(fd, err) := createfile(file.path);
+		if(fd == nil)
+			fail(sprint("creating %q: %s", file.path, err));
+		if(sys->write(fd, data, len data) != len data)
+			fail(sprint("writing: %r"));
 	}
+}
+
+createdirs(dirs: string): string
+{
+	path := "";
+	for(l := sys->tokenize(dirs, "/").t1; l != nil; l = tl l) {
+		path += "/"+hd l;
+		say("createdirs, "+path[1:]);
+		sys->create(path[1:], Sys->OREAD, 8r777|Sys->DMDIR);
+	}
+	return nil;
+}
+
+createfile(path: string): (ref Sys->FD, string)
+{
+	(dir, nil) := str->splitstrr(path, "/");
+	if(dir != nil) {
+		err := createdirs(dir);
+		if(err != nil)
+			return (nil, err);
+	}
+
+	say("create, "+path);
+	fd := sys->create(path, Sys->OWRITE, 8r666);
+	if(fd == nil)
+		return (nil, sprint("create %q: %r", path));
+	return (fd, nil);
 }
 
 say(s: string)
