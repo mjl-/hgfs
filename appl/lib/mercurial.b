@@ -48,6 +48,7 @@ init()
 
 Nodeid.create(d: array of byte, n1, n2: ref Nodeid): ref Nodeid
 {
+	say(sprint("nodeid.create, len d %d, n1 %s n2 %s", len d, n1.text(), n2.text()));
 
 	if(Nodeid.cmp(n1, n2) > 0)
 		(n1, n2) = (n2, n1);
@@ -335,14 +336,12 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 			return (nil, "diff: "+err);
 
 		say(sprint("diff (base %d, i %d, rev %d)...", e.base, i, e.rev));
-		(hunks, herr) := decode(diff);
-		if(herr != nil)
-			return (nil, sprint("error decoding patch: %s", herr));
+		(p, perr) := Patch.parse(diff);
+		if(perr != nil)
+			return (nil, sprint("error decoding patch: %s", perr));
 
-		for(l := hunks; l != nil; l = tl l)
-			say(sprint("hunk: %s", (hd l).text()));
-		d = apply(d, hunks);
-
+		say("patch: "+p.text());
+		d = p.apply(d);
 	}
 
 	par1 := lookup(rl, e.p1);
@@ -530,19 +529,29 @@ Hunk: adt {
 	text:	fn(h: self ref Hunk): string;
 };
 
+Patch: adt {
+	l:	list of ref Hunk;
+
+	parse:	fn(d: array of byte): (ref Patch, string);
+	merge:	fn(hl: list of ref Patch): ref Patch;
+	apply:	fn(h: self ref Patch, d: array of byte): array of byte;
+	text:	fn(h: self ref Patch): string;
+};
+
 Hunk.text(h: self ref Hunk): string
 {
 	return sprint("<hunk s=%d e=%d buf=%s length=%d>", h.start, h.end, string h.buf, len h.buf);
 }
 
-apply(d: array of byte, l: list of ref Hunk): array of byte
+Patch.apply(p: self ref Patch, d: array of byte): array of byte
 {
 	off := 0;
-	for(; l != nil; l = tl l) {
+	for(l := p.l; l != nil; l = tl l) {
 		h := hd l;
 		del := h.end-h.start;
 		add := len h.buf;
 		diff := add-del;
+		say(sprint("apply, len d %d, del %d add %d, diff %d, off %d", len d, del, add, diff, off));
 
 		s := h.start+off;
 		e := h.end+off;
@@ -550,23 +559,23 @@ apply(d: array of byte, l: list of ref Hunk): array of byte
 		nd[:] = d[:s];
 		nd[s:] = h.buf;
 		nd[s+len h.buf:] = d[e:];
-		d = nd;
+		d = nd[:];
 
 		off += diff;
 	}
 	return d;
 }
 
-merge(l: list of list of ref Hunk): list of ref Hunk
+Patch.merge(pl: list of ref Patch): ref Patch
 {
-	return hd l; # xxx implement
+	return hd pl; # xxx implement
 }
 
-decode(d: array of byte): (list of ref Hunk, string)
+Patch.parse(d: array of byte): (ref Patch, string)
 {
 	o := 0;
 	l: list of ref Hunk;
-	say(sprint("decode, buf %s", hex(d)));
+	say(sprint("hunk.parse, buf %s", hex(d)));
 	while(o+12 < len d) {
 		start, end, length: int;
 		(start, o) = g32(d, o);
@@ -582,9 +591,16 @@ decode(d: array of byte): (list of ref Hunk, string)
 		l = ref Hunk(start, end, buf)::l;
 		o += length;
 	}
-	return (lists->reverse(l), nil);
+	return (ref Patch(lists->reverse(l)), nil);
 }
 
+Patch.text(p: self ref Patch): string
+{
+	s := "";
+	for(l := p.l; l != nil; l = tl l)
+		s += sprint("hunk: %s", (hd l).text());
+	return s;
+}
 
 nullentry: Entry;
 
