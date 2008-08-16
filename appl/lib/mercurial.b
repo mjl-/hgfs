@@ -308,6 +308,8 @@ Revlog.getentry(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 		(raw, derr) = inflatebuf(defl[2:len defl]);
 		if(derr != nil)
 			return (nil, "inflating data after header: "+derr);
+		if(0 && len raw != e.uncsize)  # bogus check?
+			return (nil, sprint("incorrect size after inflate, want %d, have %d", e.uncsize, len raw));
 	}
 	say(sprint("revlog.getentry, returning data (%d bytes): %s", len raw, string raw));
 	return (raw, nil);
@@ -349,7 +351,7 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 	if(par1 == nil || par2 == nil)
 		return (nil, "could not find parent nodeid");
 	node := Nodeid.create(d, par1, par2);
-	if(Nodeid.cmp(node, e.nodeid))
+	if(Nodeid.cmp(node, e.nodeid) != 0)
 		return (nil, sprint("nodeid mismatch, have %s, header claims %s", node.text(), e.nodeid.text()));
 
 	return (d, nil);
@@ -576,7 +578,7 @@ Patch.parse(d: array of byte): (ref Patch, string)
 	o := 0;
 	l: list of ref Hunk;
 	say(sprint("hunk.parse, buf %s", hex(d)));
-	while(o+12 < len d) {
+	while(o+12 <= len d) {
 		start, end, length: int;
 		(start, o) = g32(d, o);
 		(end, o) = g32(d, o);
