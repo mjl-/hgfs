@@ -1,4 +1,4 @@
-implement HgGet;
+implement HgTar;
 
 include "sys.m";
 	sys: Sys;
@@ -14,7 +14,7 @@ include "mercurial.m";
 dflag: int;
 vflag: int;
 
-HgGet: module {
+HgTar: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
 
@@ -72,41 +72,57 @@ init(nil: ref Draw->Context, args: list of string)
 		if(derr != nil)
 			fail(derr);
 		say("file read...");
-		warn(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len data));
+		say(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len data));
 
-		(fd, err) := createfile(file.path);
-		if(fd == nil)
-			fail(sprint("creating %q: %s", file.path, err));
-		if(sys->write(fd, data, len data) != len data)
+		# note: it seems we don't have to write directories
+
+		# write header.  512 bytes, has file name, mode, size, checksum, some more.
+		hdr := tarhdr(file.path, big len data, change.when+change.tzoff);
+		if(sys->write(sys->fildes(1), hdr, len hdr) != len hdr)
+			fail(sprint("writing header: %r"));
+
+		# and write the file
+		if(sys->write(sys->fildes(1), data, len data) != len data)
 			fail(sprint("writing: %r"));
+
+		# pad file with zero bytes to next 512-byte boundary
+		pad := array[512 - len data % 512] of {* => byte 0};
+		if(sys->write(sys->fildes(1), pad, len pad) != len pad)
+			fail(sprint("writing padding: %r"));
 	}
+
+	# write end of file
+	end := array[2*512] of {* => byte 0};
+	if(sys->write(sys->fildes(1), end, len end) != len end)
+		fail(sprint("writin trailer: %r"));
 }
 
-createdirs(dirs: string): string
+TARPATH:	con 0;
+TARMODE:	con 100;
+TARUID:		con 108;
+TARGID:		con 116;
+TARSIZE:	con 124;
+TARMTIME:	con 136;
+TARCHECKSUM:	con 148;
+TARLINK:	con 156;
+tarhdr(path: string, size: big, mtime: int): array of byte
 {
-	path := "";
-	for(l := sys->tokenize(dirs, "/").t1; l != nil; l = tl l) {
-		path += "/"+hd l;
-		say("createdirs, "+path[1:]);
-		sys->create(path[1:], Sys->OREAD, 8r777|Sys->DMDIR);
-	}
-	return nil;
-}
+	d := array[512] of {* => byte 0};
+	d[TARPATH:] = array of byte path;
+	d[TARMODE:] = array of byte string sprint("%8o", 8r644);
+	d[TARUID:] = array of byte string sprint("%8o", 0);
+	d[TARGID:] = array of byte string sprint("%8o", 0);
+	d[TARSIZE:] = array of byte sprint("%12bo", size);
+	d[TARMTIME:] = array of byte sprint("%12o", mtime);
+	d[TARLINK] = byte '0'; # '0' is normal file;  '5' is directory
 
-createfile(path: string): (ref Sys->FD, string)
-{
-	(dir, nil) := str->splitstrr(path, "/");
-	if(dir != nil) {
-		err := createdirs(dir);
-		if(err != nil)
-			return (nil, err);
-	}
-
-	say("create, "+path);
-	fd := sys->create(path, Sys->OWRITE, 8r666);
-	if(fd == nil)
-		return (nil, sprint("create %q: %r", path));
-	return (fd, nil);
+	d[TARCHECKSUM:] = array[8] of {* => byte ' '};
+	sum := 0;
+	for(i := 0; i < len d; i++)
+		sum += int d[i];
+	d[TARCHECKSUM:] = array of byte sprint("%6o", sum);
+	d[TARCHECKSUM+6:] = array[] of {byte 0, byte ' '};
+	return d;
 }
 
 say(s: string)
