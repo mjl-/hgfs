@@ -200,24 +200,46 @@ Revlog.open(path: string): (ref Revlog, string)
 {
 	say(sprint("revlog.open %q", path));
 	ipath := path+".i";
-	rl := ref Revlog(path, nil, 0, nil);
-	rl.fd = sys->open(ipath, Sys->OREAD);
-	if(rl.fd == nil)
+	rl := ref Revlog(path, nil, nil, 0, 0, nil);
+	rl.ifd = sys->open(ipath, Sys->OREAD);
+	if(rl.ifd == nil)
 		return (nil, sprint("open %q: %r", ipath));
+
+	buf := array[4] of byte;
+	if(sys->readn(rl.ifd, buf, len buf) != len buf)
+		return (nil, sprint("reading revlog version & flags: %r"));
+
+	rl.flags = g16(buf, 0).t0;
+	rl.version = g16(buf, 2).t0;
+
+	if(!rl.isindexonly()) {
+		dpath := path+".d";
+		rl.dfd = sys->open(dpath, Sys->OREAD);
+		if(rl.dfd == nil)
+			return (nil, sprint("open %q: %r", dpath));
+		# xxx verify .d file is as expected?
+	}
+
 	say("revlog opened");
 	return (rl, nil);
 }
 
-Revlog.isindexonly(r: self ref Revlog): int
+Revlog.isindexonly(rl: self ref Revlog): int
 {
-	r = r;
-	return 1; # todo
+	return rl.flags&Indexonly;
 }
 
 lookup(rl: ref Revlog, id: int): ref Nodeid
 {
 	if(id == Nullnode)
 		return nullnode;
+
+	if(!rl.isindexonly()) {
+		(e, err) := findrevnode(rl, id, nil, 0);
+		if(err != nil)
+			return nil;
+		return e.nodeid;
+	}
 
 	for(l := rl.nodes; l != nil; l = tl l) {
 		(p, nodeid) := hd l;
@@ -229,15 +251,31 @@ lookup(rl: ref Revlog, id: int): ref Nodeid
 
 add(rl: ref Revlog, id: int, n: ref Nodeid)
 {
-	rl.nodes = (id, n)::rl.nodes;
+	if(rl.isindexonly())
+		rl.nodes = (id, n)::rl.nodes;
 }
 
 findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid, last: int): (ref Entry, string)
 {
 	say(sprint("findrevnode, rev %d, nodeid %s", rev, nodeid.text()));
 
-	# xxx do something different when there is a .d file
-	b := bufio->fopen(rl.fd, Bufio->OREAD);
+	if(last && !rl.isindexonly()) {
+		(ok, dir) := sys->fstat(rl.ifd);
+		if(ok != 0)
+			return (nil, sprint("fstat %q: %r", rl.path));
+		if(dir.length % big Entrysize != big 0)
+			return (nil, sprint("bad index file, not multiple of entrysize (%d): %bd", Entrysize, dir.length));
+		rev = int (dir.length / big Entrysize)-1;
+		last = 0;
+	}
+	if(rev != -1 && !rl.isindexonly()) {
+		n := sys->pread(rl.ifd, buf := array[Entrysize] of byte, len buf, big (rev*Entrysize));
+		if(n != len buf)
+			return (nil, sprint("reading entry at offset %bd: %r", big (rev*Entrysize)));
+		return Entry.parse(buf, rev);
+	}
+
+	b := bufio->fopen(rl.ifd, Bufio->OREAD);
 	o := big 0;
 	e: ref Entry;
 	for(i := 0;; i++) {
@@ -251,19 +289,18 @@ findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid, last: int): (ref Entry
 			break;
 		if(n < 0)
 			return (nil, sprint("reading index: %r"));
-		if(i == 0)
-			buf[0:] = array[4] of {* => byte 0};  # xxx revlog version & flags
 		err: string;
-		(e, err) = Entry.parse(buf);
+		(e, err) = Entry.parse(buf, i);
 		if(err != nil)
 			return (nil, "parsing index entry: "+err);
-		e.rev = i;
-		e.ioffset = o+big Entrysize;  # xxx only for .i-only revlogs
+		if(rl.isindexonly())
+			e.ioffset = o+big Entrysize;
 		add(rl, i, e.nodeid);
 
 		say(sprint("entry: %s", e.text()));
 		o += big Entrysize;
-		o += big e.csize;  # xxx this only applies to .i files
+		if(rl.isindexonly())
+			o += big e.csize;
 		if(rev != -1 && i == rev)
 			return (e, nil);
 		if(nodeid != nil && Nodeid.cmp(e.nodeid, nodeid) == 0)
@@ -288,11 +325,15 @@ Revlog.getentry(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 {
 	say("revlog.getentry, "+e.text());
 
-	b := bufio->fopen(rl.fd, Bufio->OREAD);
+	fd := rl.dfd;
+	if(rl.isindexonly())
+		fd = rl.ifd;
+
+	b := bufio->fopen(fd, Bufio->OREAD);
 	if(b == nil)
 		return (nil, sprint("bufio fopen revlog: %r"));
 
-	say(sprint("reading data from offset %bd", e.ioffset));
+	say(sprint("reading data from offset %bd, index %d, path %q", e.ioffset, rl.isindexonly(), rl.path));
 	if(b.seek(e.ioffset, Bufio->SEEKSTART) != e.ioffset)
 		return (nil, "seek failed");
 
@@ -309,7 +350,7 @@ Revlog.getentry(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 	'u' =>	raw = defl[1:];
 	0 =>	raw = defl;
 	* =>	derr: string;
-		(raw, derr) = inflatebuf(defl[2:len defl]);
+		(raw, derr) = inflatebuf(defl);
 		if(derr != nil)
 			return (nil, "inflating data after header: "+derr);
 		if(0 && len raw != e.uncsize)  # bogus check?
@@ -642,14 +683,20 @@ Patch.text(p: self ref Patch): string
 
 nullentry: Entry;
 
-Entry.parse(buf: array of byte): (ref Entry, string)
+Entry.parse(buf: array of byte, index: int): (ref Entry, string)
 {
 	if(len buf != 64)
 		return (nil, "wrong number of bytes");
 
-	e := ref nullentry;
+	# first entry in index file has version & flags in it
+	if(index == 0)
+		buf[0:] = array[4] of {* => byte 0};
+
 	o := 0;
+	e := ref nullentry;
+	e.rev = index;
 	(e.offset, o) = g48(buf, o);
+	e.ioffset = e.offset;
 	(e.flags, o) = g16(buf, o);
 	(e.csize, o) = g32(buf, o);
 	(e.uncsize, o) = g32(buf, o);
@@ -675,6 +722,8 @@ Entry.text(e: self ref Entry): string
 
 inflatebuf(src: array of byte): (array of byte, string)
 {
+	origsrc := src;
+	src = src[2:];
 	say(sprint("inflating %d bytes of data", len src));
 
 	rqch := inflate->start("vd");
@@ -710,10 +759,20 @@ inflatebuf(src: array of byte): (array of byte, string)
 		Info =>
 			say("filter: "+m.msg);
 		Error =>
+			#writefile("deflate.bin", origsrc);
 			return (nil, "error from filter: "+m.e);
 		}
 	}
-	
+}
+
+writefile(path: string, d: array of byte)
+{
+	fd := sys->create(path, Sys->OWRITE, 8r666);
+	if(fd == nil)
+		raise sprint("creating %q: %r", path);
+	if(sys->write(fd, d, len d) != len d)
+		raise sprint("writing to %q: %r", path);
+	say(sprint("wrote %d bytes to %q", len d, path));
 }
 
 unhex(s: string): array of byte

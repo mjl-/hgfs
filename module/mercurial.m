@@ -46,14 +46,18 @@ Mercurial: module {
 		base, link, p1, p2:     int;
 		nodeid:	ref Nodeid;
 
-		parse:	fn(buf: array of byte): (ref Entry, string);
+		parse:	fn(buf: array of byte, index: int): (ref Entry, string);
 		text:	fn(e: self ref Entry): string;
 	};
 
+
+	# Revlog.flags
+	Indexonly: con 1<<iota;
+
 	Revlog: adt {
 		path:	string;
-		fd:	ref Sys->FD;
-		flags:	int;  # todo
+		ifd, dfd:	ref Sys->FD;
+		version, flags: int;
 		nodes:	list of (int, ref Nodeid);
 
 		open:	fn(path: string): (ref Revlog, string);
