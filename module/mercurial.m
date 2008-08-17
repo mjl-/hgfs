@@ -74,9 +74,11 @@ Mercurial: module {
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
+		reponame: 	string;
 
 		open:		fn(path: string): (ref Repo, string);
 		find:		fn(path: string): (ref Repo, string);
+		name:		fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;
 		escape:	fn(r: self ref Repo, path: string): string;

@@ -450,7 +450,13 @@ Repo.open(path: string): (ref Repo, string)
 		requires = l::requires;
 	}
 
-	repo := ref Repo(path, requires);
+	namepath := path+"/..";
+	(ok, dir) := sys->stat(namepath);
+	if(ok != 0)
+		return (nil, sprint("stat %q: %r", namepath));
+	name := dir.name;
+
+	repo := ref Repo(path, requires, name);
 	if(repo.isstore() && !isdir(path+"/store"))
 		return (nil, "missing directory \".hg/store\"");
 	if(!repo.isstore() && !isdir(path+"/data"))
@@ -475,6 +481,11 @@ Repo.find(path: string): (ref Repo, string)
 		(path, nil) = str->splitstrr(path, "/");
 	}
 	return (nil, "no repo found");
+}
+
+Repo.name(r: self ref Repo): string
+{
+	return r.reponame;
 }
 
 Repo.isstore(r: self ref Repo): int
