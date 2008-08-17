@@ -232,13 +232,14 @@ add(rl: ref Revlog, id: int, n: ref Nodeid)
 	rl.nodes = (id, n)::rl.nodes;
 }
 
-findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
+findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid, last: int): (ref Entry, string)
 {
 	say(sprint("findrevnode, rev %d, nodeid %s", rev, nodeid.text()));
 
 	# xxx do something different when there is a .d file
 	b := bufio->fopen(rl.fd, Bufio->OREAD);
 	o := big 0;
+	e: ref Entry;
 	for(i := 0;; i++) {
 		say(sprint("reading entry from offset %bd", o));
 		buf := array[Entrysize] of byte;
@@ -252,7 +253,8 @@ findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
 			return (nil, sprint("reading index: %r"));
 		if(i == 0)
 			buf[0:] = array[4] of {* => byte 0};  # xxx revlog version & flags
-		(e, err) := Entry.parse(buf);
+		err: string;
+		(e, err) = Entry.parse(buf);
 		if(err != nil)
 			return (nil, "parsing index entry: "+err);
 		e.rev = i;
@@ -267,17 +269,19 @@ findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
 		if(nodeid != nil && Nodeid.cmp(e.nodeid, nodeid) == 0)
 			return (e, nil);
 	}
+	if(last && e != nil)
+		return (e, nil);
 	return (nil, "no such revision");
 }
 
 Revlog.findrev(rl: self ref Revlog, rev: int): (ref Entry, string)
 {
-	return findrevnode(rl, rev, nil);
+	return findrevnode(rl, rev, nil, 0);
 }
 
 Revlog.findnodeid(rl: self ref Revlog, n: ref Nodeid): (ref Entry, string)
 {
-	return findrevnode(rl, -1, n);
+	return findrevnode(rl, -1, n, 0);
 }
 
 Revlog.getentry(rl: self ref Revlog, e: ref Entry): (array of byte, string)
@@ -379,6 +383,11 @@ Revlog.getnodeid(rl: self ref Revlog, n: ref Nodeid): (ref Entry, array of byte,
 	if(derr != nil)
 		return (nil, nil, derr);
 	return (e, d, nil);
+}
+
+Revlog.lastrev(rl: self ref Revlog): (ref Entry, string)
+{
+	return findrevnode(rl, -1, nil, 1);
 }
 
 
@@ -521,6 +530,33 @@ Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byt
 	if(derr != nil)
 		return (nil, derr);
 	return (data, nil);
+}
+
+Repo.lastrev(r: self ref Repo): (int, string)
+{
+	clpath := r.storedir()+"/00changelog";
+	(cl, clerr) := Revlog.open(clpath);
+	if(clerr != nil)
+		return (-1, clerr);
+
+	(e, rerr) := cl.lastrev();
+	if(rerr != nil)
+		return (-1, rerr);
+	return (e.rev, nil);
+}
+
+Repo.change(r: self ref Repo, rev: int): (ref Change, string)
+{
+	clpath := r.storedir()+"/00changelog";
+	(cl, clerr) := Revlog.open(clpath);
+	if(clerr != nil)
+		return (nil, clerr);
+	(nil, cdata, clderr) := cl.getrev(rev);
+	if(clderr != nil)
+		return (nil, clderr);
+
+	(c, cerr) := Change.parse(cdata);
+	return (c, cerr);
 }
 
 

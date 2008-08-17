@@ -4,6 +4,7 @@
 TARG=\
 	get.dis\
 	tar.dis\
+	log.dis\
 	#readindex.dis\
 
 SYSMODULES=\

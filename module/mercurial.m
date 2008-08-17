@@ -64,6 +64,7 @@ Mercurial: module {
 		getfile:	fn(rl: self ref Revlog, e: ref Entry): (array of byte, string);
 		getrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, array of byte, string);
 		getnodeid:	fn(rl: self ref Revlog, n: ref Nodeid): (ref Entry, array of byte, string);
+		lastrev:	fn(rl: self ref Revlog): (ref Entry, string);
 	};
 
 	Repo: adt {
@@ -79,5 +80,7 @@ Mercurial: module {
 		openrevlog:	fn(r: self ref Repo, path: string): (ref Revlog, string);
 		manifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest, string);
 		readfile:	fn(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byte, string);
+		lastrev:	fn(r: self ref Repo): (int, string);
+		change:		fn(r: self ref Repo, rev: int): (ref Change, string);
 	};
 };
