@@ -2,7 +2,6 @@ implement HgFs;
 
 # todo
 # - set Dir.length in Qrepofiles.  is this info in the revlog?  we may have to parse patches for this...
-# - make stat on Qroot also return reponame
 # - list both "last" and the last revision in readdir on /log & /files?
 # - clean out the mftab more often
 # - don't keep an Mf per walked-to file.  the qids allow us to reconstruct all info.  first read on plain file -> read data. first read on directory -> generate list of dirs, with file sizes.
@@ -132,6 +131,7 @@ init(nil: ref Draw->Context, args: list of string)
 	say("found repo");
 
 	reponame = repo.name();
+	tab[Qroot].t1 = reponame;
 	tgztab = tgztab.new(32, nil);
 	mftab = mftab.new(32, nil);
 
