@@ -276,6 +276,8 @@ findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid, last: int): (ref Entry
 	}
 
 	b := bufio->fopen(rl.ifd, Bufio->OREAD);
+	if(b == nil)
+		return (nil, sprint("bufio fopen on index: %r"));
 	o := big 0;
 	e: ref Entry;
 	for(i := 0;; i++) {
@@ -431,6 +433,34 @@ Revlog.lastrev(rl: self ref Revlog): (ref Entry, string)
 	return findrevnode(rl, -1, nil, 1);
 }
 
+Revlog.filelength(rl: self ref Revlog, nodeid: ref Nodeid): (big, string)
+{
+	say("revlog.filelength, "+nodeid.text());
+	(e, rerr) := rl.findnodeid(nodeid);
+	if(rerr != nil)
+		return (big -1, rerr);
+
+	(d, derr) := getentryrev(rl, e.base);
+	if(derr != nil)
+		return (big -1, "base: "+derr);
+	n := len d;
+	d = nil;
+
+	for(i := e.base+1; i <= e.rev; i++) {
+		(diff, err) := getentryrev(rl, i);
+		if(err != nil)
+			return (big -1, "diff: "+err);
+
+		say(sprint("diff (base %d, i %d, rev %d)...", e.base, i, e.rev));
+		(p, perr) := Patch.parse(diff);
+		if(perr != nil)
+			return (big -1, sprint("error decoding patch: %s", perr));
+
+		n += p.sizediff();
+	}
+	return (big n, nil);
+}
+
 
 Repo.open(path: string): (ref Repo, string)
 {
@@ -532,7 +562,7 @@ Repo.storedir(r: self ref Repo): string
 
 Repo.openrevlog(r: self ref Repo, path: string): (ref Revlog, string)
 {
-	path = r.storedir()+"/"+r.escape(path);
+	path = r.storedir()+"/data/"+r.escape(path);
 	return Revlog.open(path);
 }
 
@@ -611,6 +641,28 @@ Repo.change(r: self ref Repo, rev: int): (ref Change, string)
 	return (c, cerr);
 }
 
+Repo.filelength(r: self ref Repo, path: string, n: ref Nodeid): (big, string)
+{
+	(rl, err) := r.openrevlog(path);
+	if(err != nil)
+		return (big -1, err);
+	return rl.filelength(n);
+}
+
+Repo.filemtime(r: self ref Repo, path: string, n: ref Nodeid): (int, string)
+{
+	e: ref Entry;
+	c: ref Change;
+	(rl, err) := r.openrevlog(path);
+	if(err == nil)
+		(e, err) = rl.findnodeid(n);
+	if(err == nil)
+		(c, err) = r.change(e.link);
+	if(err != nil)
+		return (0, err);
+	return (c.when+c.tzoff, nil);
+}
+
 
 Hunk: adt {
 	start, end:	int;
@@ -625,6 +677,7 @@ Patch: adt {
 	parse:	fn(d: array of byte): (ref Patch, string);
 	merge:	fn(hl: list of ref Patch): ref Patch;
 	apply:	fn(h: self ref Patch, d: array of byte): array of byte;
+	sizediff:	fn(h: self ref Patch): int;
 	text:	fn(h: self ref Patch): string;
 };
 
@@ -654,6 +707,16 @@ Patch.apply(p: self ref Patch, d: array of byte): array of byte
 		off += diff;
 	}
 	return d;
+}
+
+Patch.sizediff(p: self ref Patch): int
+{
+	n := 0;
+	for(l := p.l; l != nil; l = tl l) {
+		h := hd l;
+		n += len h.buf - (h.end-h.start);
+	}
+	return n;
 }
 
 Patch.merge(pl: list of ref Patch): ref Patch
@@ -733,7 +796,7 @@ Entry.text(e: self ref Entry): string
 
 inflatebuf(src: array of byte): (array of byte, string)
 {
-	origsrc := src;
+	#origsrc := src;
 	src = src[2:];
 	say(sprint("inflating %d bytes of data", len src));
 
