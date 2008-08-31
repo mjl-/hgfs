@@ -9,13 +9,19 @@ TARG=\
 	#readindex.dis\
 
 SYSMODULES=\
+	mercurial.m\
 	arg.m\
 	bufio.m\
 	daytime.m\
 	draw.m\
+	filter.m\
 	keyring.m\
+	lists.m\
 	string.m\
+	styx.m\
+	styxservers.m\
 	sys.m\
+	tables.m\
 
 DISBIN=$ROOT/dis/hg
 

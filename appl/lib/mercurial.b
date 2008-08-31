@@ -1,11 +1,10 @@
 implement Mercurial;
 
 # todo
-# - when to look for .d?  my repo's don't have any...
 # - revlog revision & flags in .i?
 # - flags in manifest?  like file mode (permissions)?
+# - symlinks, other file types?
 # - long entries in manifest?
-# - keep track of entries while reading revlog index, so we can read base+updates without constantly reading the index
 
 include "sys.m";
 	sys: Sys;
@@ -200,7 +199,7 @@ Revlog.open(path: string): (ref Revlog, string)
 {
 	say(sprint("revlog.open %q", path));
 	ipath := path+".i";
-	rl := ref Revlog(path, nil, nil, 0, 0, nil);
+	rl := ref Revlog(path, nil, nil, 0, 0, array[0] of ref Nodeid, nil, big 0);
 	rl.ifd = sys->open(ipath, Sys->OREAD);
 	if(rl.ifd == nil)
 		return (nil, sprint("open %q: %r", ipath));
@@ -229,163 +228,12 @@ Revlog.isindexonly(rl: self ref Revlog): int
 	return rl.flags&Indexonly;
 }
 
-lookup(rl: ref Revlog, id: int): ref Nodeid
+reconstruct(rl: ref Revlog, e: ref Entry, bufs: list of array of byte): (array of byte, string)
 {
-	if(id == Nullnode)
-		return nullnode;
-
-	if(!rl.isindexonly()) {
-		(e, err) := findrevnode(rl, id, nil, 0);
-		if(err != nil)
-			return nil;
-		return e.nodeid;
-	}
-
-	for(l := rl.nodes; l != nil; l = tl l) {
-		(p, nodeid) := hd l;
-		if(p == id)
-			return nodeid;
-	}
-	return nil;
-}
-
-add(rl: ref Revlog, id: int, n: ref Nodeid)
-{
-	if(rl.isindexonly())
-		rl.nodes = (id, n)::rl.nodes;
-}
-
-findrevnode(rl: ref Revlog, rev: int, nodeid: ref Nodeid, last: int): (ref Entry, string)
-{
-	say(sprint("findrevnode, rev %d, nodeid %s", rev, nodeid.text()));
-
-	if(last && !rl.isindexonly()) {
-		(ok, dir) := sys->fstat(rl.ifd);
-		if(ok != 0)
-			return (nil, sprint("fstat %q: %r", rl.path));
-		if(dir.length % big Entrysize != big 0)
-			return (nil, sprint("bad index file, not multiple of entrysize (%d): %bd", Entrysize, dir.length));
-		rev = int (dir.length / big Entrysize)-1;
-		last = 0;
-	}
-	if(rev != -1 && !rl.isindexonly()) {
-		n := sys->pread(rl.ifd, buf := array[Entrysize] of byte, len buf, big (rev*Entrysize));
-		if(n != len buf)
-			return (nil, sprint("reading entry at offset %bd: %r", big (rev*Entrysize)));
-		return Entry.parse(buf, rev);
-	}
-
-	b := bufio->fopen(rl.ifd, Bufio->OREAD);
-	if(b == nil)
-		return (nil, sprint("bufio fopen on index: %r"));
-	o := big 0;
-	e: ref Entry;
-	for(i := 0;; i++) {
-		say(sprint("reading entry from offset %bd", o));
-		buf := array[Entrysize] of byte;
-		if(b.seek(o, Bufio->SEEKSTART) != o)
-			return (nil, "seek failed");
-		
-		n := b.read(buf, len buf);
-		if(n == 0)
-			break;
-		if(n < 0)
-			return (nil, sprint("reading index: %r"));
-		err: string;
-		(e, err) = Entry.parse(buf, i);
-		if(err != nil)
-			return (nil, "parsing index entry: "+err);
-		if(rl.isindexonly())
-			e.ioffset = o+big Entrysize;
-		add(rl, i, e.nodeid);
-
-		say(sprint("entry: %s", e.text()));
-		o += big Entrysize;
-		if(rl.isindexonly())
-			o += big e.csize;
-		if(rev != -1 && i == rev)
-			return (e, nil);
-		if(nodeid != nil && Nodeid.cmp(e.nodeid, nodeid) == 0)
-			return (e, nil);
-	}
-	if(last && e != nil)
-		return (e, nil);
-	return (nil, "no such revision");
-}
-
-Revlog.findrev(rl: self ref Revlog, rev: int): (ref Entry, string)
-{
-	return findrevnode(rl, rev, nil, 0);
-}
-
-Revlog.findnodeid(rl: self ref Revlog, n: ref Nodeid): (ref Entry, string)
-{
-	return findrevnode(rl, -1, n, 0);
-}
-
-Revlog.getentry(rl: self ref Revlog, e: ref Entry): (array of byte, string)
-{
-	say("revlog.getentry, "+e.text());
-
-	fd := rl.dfd;
-	if(rl.isindexonly())
-		fd = rl.ifd;
-
-	b := bufio->fopen(fd, Bufio->OREAD);
-	if(b == nil)
-		return (nil, sprint("bufio fopen revlog: %r"));
-
-	say(sprint("reading data from offset %bd, index %d, path %q", e.ioffset, rl.isindexonly(), rl.path));
-	if(b.seek(e.ioffset, Bufio->SEEKSTART) != e.ioffset)
-		return (nil, "seek failed");
-
-	defl := array[e.csize] of byte;
-	n := b.read(defl, len defl);
-	if(n != len defl)
-		return (nil, sprint("reading data after index entry: %r"));
-
-	if(len defl == 0)
-		return (array[0] of byte, nil);
-
-	raw: array of byte;
-	case int defl[0] {
-	'u' =>	raw = defl[1:];
-	0 =>	raw = defl;
-	* =>	derr: string;
-		(raw, derr) = inflatebuf(defl);
-		if(derr != nil)
-			return (nil, "inflating data after header: "+derr);
-		if(0 && len raw != e.uncsize)  # bogus check?
-			return (nil, sprint("incorrect size after inflate, want %d, have %d", e.uncsize, len raw));
-	}
-	say(sprint("revlog.getentry, returning data (%d bytes): %s", len raw, string raw));
-	return (raw, nil);
-}
-
-getentryrev(rl: ref Revlog, rev: int): (array of byte, string)
-{
-	(e, err) := rl.findrev(rev);
-	if(err != nil)
-		return (nil, err);
-
-	return rl.getentry(e);
-}
-
-Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
-{
-	say("revlog.getfile: "+e.text());
-
-	(d, derr) := getentryrev(rl, e.base);
-	if(derr != nil)
-		return (nil, "base: "+derr);
-
-	for(i := e.base+1; i <= e.rev; i++) {
-		(diff, err) := getentryrev(rl, i);
-		if(err != nil)
-			return (nil, "diff: "+err);
-
-		say(sprint("diff (base %d, i %d, rev %d)...", e.base, i, e.rev));
-		(p, perr) := Patch.parse(diff);
+	# first is base, later are patches
+	d := hd bufs;
+	for(bufs = tl bufs; bufs != nil; bufs = tl bufs) {
+		(p, perr) := Patch.parse(hd bufs);
 		if(perr != nil)
 			return (nil, sprint("error decoding patch: %s", perr));
 
@@ -393,10 +241,13 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 		d = p.apply(d);
 	}
 
-	par1 := lookup(rl, e.p1);
-	par2 := lookup(rl, e.p2);
-	if(par1 == nil || par2 == nil)
-		return (nil, "could not find parent nodeid");
+	# verify data is correct
+	# nodeidcache will always be filled when we get here
+	par1 := par2 := nullnode;
+	if(e.p1 >= 0)
+		par1 = rl.nodeidcache[e.p1];
+	if(e.p2 >= 0)
+		par2 = rl.nodeidcache[e.p2];
 	node := Nodeid.create(d, par1, par2);
 	if(Nodeid.cmp(node, e.nodeid) != 0)
 		return (nil, sprint("nodeid mismatch, have %s, header claims %s", node.text(), e.nodeid.text()));
@@ -404,61 +255,318 @@ Revlog.getfile(rl: self ref Revlog, e: ref Entry): (array of byte, string)
 	return (d, nil);
 }
 
-Revlog.getrev(rl: self ref Revlog, rev: int): (ref Entry, array of byte, string)
+reconstructlength(bufs: list of array of byte): (big, string)
 {
-	say("revlog.getrev, "+string rev);
-	(e, err) := rl.findrev(rev);
-	if(err != nil)
-		return (nil, nil, err);
-	(d, derr) := rl.getfile(e);
-	if(derr != nil)
-		return (nil, nil, derr);
-	return (e, d, nil);
+	# first is base, later are patches
+	size := big len hd bufs;
+	for(bufs = tl bufs; bufs != nil; bufs = tl bufs) {
+		(p, perr) := Patch.parse(hd bufs);
+		if(perr != nil)
+			return (big -1, sprint("error decoding patch: %s", perr));
+
+		say("patch: "+p.text());
+		size += big p.sizediff();
+	}
+
+	return (size, nil);
 }
 
-Revlog.getnodeid(rl: self ref Revlog, n: ref Nodeid): (ref Entry, array of byte, string)
+decompress(d: array of byte): (array of byte, string)
 {
-	say("revlog.getnodeid, "+n.text());
-	(e, err) := rl.findnodeid(n);
-	if(err != nil)
-		return (nil, nil, err);
-	(d, derr) := rl.getfile(e);
-	if(derr != nil)
-		return (nil, nil, derr);
-	return (e, d, nil);
+	if(len d == 0)
+		return (d, nil);
+	# may be compressed, first byte will tell us.
+	case int d[0] {
+	'u' =>	return (d[1:], nil);
+	0 =>	return (d, nil);
+	* =>	return inflatebuf(d); # xxx should e.uncsize matter here?
+	}
 }
 
-Revlog.lastrev(rl: self ref Revlog): (ref Entry, string)
+# xxx should do adding/finding more efficiently
+cacheadd(rl: ref Revlog, e: ref Entry, ecache: int)
 {
-	return findrevnode(rl, -1, nil, 1);
+	say(sprint("cacheadd, ecache %d, icacheoff %bd, e %s", ecache, rl.icacheoff, e.text()));
+	if(e.rev < len rl.nodeidcache)
+		return;
+
+	nc := array[len rl.nodeidcache+1] of ref Nodeid;
+	nc[:] = rl.nodeidcache;
+	nc[len rl.nodeidcache] = e.nodeid;
+	rl.nodeidcache = nc;
+	if(ecache) {
+		ne := array[len rl.entrycache+1] of ref Entry;
+		ne[:] = rl.entrycache;
+		ne[len rl.entrycache] = e;
+		rl.icacheoff += big Entrysize;
+		if(rl.isindexonly())
+			rl.icacheoff += big e.csize;
+		rl.entrycache = ne;
+	}
+}
+
+cachefindnodeid(rl: ref Revlog, n: ref Nodeid): int
+{
+	nstr := n.text();
+	for(i := 0; i < len rl.nodeidcache; i++)
+		if(rl.nodeidcache[i].text() == nstr)
+			return i;
+	return -1;
+}
+
+Mkeepentries, Mfindlast, Mkeepdata: con 1<<iota;
+
+# read through index starting at `start', keeping track of data since last baserev, until we find entry matching `rev' or `n'.
+# mode:
+# `findlast': read through the entire index file to find the last entry (only used for .i-only, otherwise we fstat)
+# `keepentries': return all entries read.  otherwise, only the entry of the requested revision/nodeid is returned.
+# `keepdata': return all data read.  otherwise no data is returned (or decompressed)
+readindex(rl: ref Revlog, start: big, startrev, rev: int, nodeid: ref Nodeid, mode: int): (list of array of byte, list of ref Entry, string)
+{
+	keepentries := mode & Mkeepentries;
+	findlast := mode & Mfindlast;
+	keepdata := mode & Mkeepdata;
+	say(sprint("readindex, start %bd startrev %d, rev %d nodeid %s, keepentries %d, findlast %d, keepdata %d", start, startrev, rev, nodeid.text(), keepentries, findlast, keepdata));
+
+	b := bufio->fopen(rl.ifd, Bufio->OREAD);
+	if(b == nil)
+		return (nil, nil, sprint("bufio fopen: %r"));
+
+	if(b.seek(start, Bufio->SEEKSTART) != start)
+		return (nil, nil, sprint("seek: %r"));
+
+	data: list of array of byte;
+	entries: list of ref Entry;
+
+	indexonly := rl.isindexonly();
+	ebuf := array[Entrysize] of byte;
+	for(;;) {
+		n := b.read(ebuf, len ebuf);
+		if(n == 0) {
+			if(findlast)
+				return (nil, entries, nil);
+			return (nil, nil, sprint("no such rev/nodeid %d/%s", rev, nodeid.text()));
+		}
+		if(n < 0)
+			return (nil, nil, sprint("read: %r"));
+		(e, err) := Entry.parse(ebuf, startrev++);
+		if(err != nil)
+			return (nil, nil, err);
+
+		if(indexonly) {
+			e.ioffset = start+big Entrysize;
+
+			dbuf := array[e.csize] of byte;
+			have := b.read(dbuf, len dbuf);
+			if(have != len dbuf)
+				return (nil, nil, sprint("read data: %r"));
+
+			(dbuf, err) = decompress(dbuf);
+			if(err != nil)
+				return (nil, nil, err);
+
+			if(keepdata) {
+				if(e.rev == e.base)
+					data = nil;
+				data = dbuf::data;
+			}
+
+			start += big (Entrysize+e.csize);
+		}
+		if(findlast)
+			entries = e::nil;
+		else if(e.rev == e.base)
+			entries = nil;
+
+		if(e.rev >= len rl.nodeidcache)
+			cacheadd(rl, e, indexonly);
+
+		match := e.rev == rev || (nodeid != nil && Nodeid.cmp(nodeid, e.nodeid) == 0);
+		if(!findlast && (keepentries || match))
+			entries = e::entries;
+		if(match)
+			break;
+	}
+	return (lists->reverse(data), lists->reverse(entries), nil);
+}
+
+readentry(fd: ref Sys->FD, off: big, rev: int): (ref Entry, string)
+{
+	say(sprint("readentry, off %bd, rev %d", off, rev));
+	if(sys->seek(fd, off, Sys->SEEKSTART) != off)
+		return (nil, sprint("seek: %r"));
+	ebuf := array[Entrysize] of byte;
+	n := sys->readn(fd, ebuf, len ebuf);
+	if(n != len ebuf)
+		return (nil, sprint("reading entry: %r"));
+	return Entry.parse(ebuf, rev);
+}
+
+get(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (list of array of byte, ref Entry, string)
+{
+	say(sprint("revlog.get, rev %d nodeid %s", rev, nodeid.text()));
+	bufs: list of array of byte;
+	entries: list of ref Entry;
+
+	# start at beginning of index file
+	ioff := big 0;
+	ioffrev := 0;
+
+	# if looking for nodeid, perhaps we've seen it before
+	if(rev < 0)
+		rev = cachefindnodeid(rl, nodeid);
+
+	if(rl.isindexonly()) {
+		# if looking for rev, perhaps it's in the cache and we can skip anything before our revs base revision
+		if(rev >= 0 && rev < len rl.entrycache) {
+			e := rl.entrycache[rev];
+			ebase := rl.entrycache[e.base];
+			ioff = ebase.ioffset;
+			ioffrev = ebase.rev;
+		}
+
+		err: string;
+		(bufs, entries, err) = readindex(rl, ioff, ioffrev, rev, nodeid, Mkeepdata);
+		if(err != nil)
+			return (nil, nil, err);
+	} else {
+		# if revision is known, read the entry to find the baserev
+		if(rev >= 0) {
+			(e, err) := readentry(rl.ifd, big (rev*Entrysize), rev);
+			if(err != nil)
+				return (nil, nil, err);
+			ioff = big (e.base*Entrysize);
+			ioffrev = e.base;
+		}
+		err: string;
+		(nil, entries, err) = readindex(rl, ioff, ioffrev, rev, nodeid, Mkeepentries|Mkeepdata);
+		if(err != nil)
+			return (nil, nil, err);
+
+		soff := (hd entries).offset;
+		eend := hd lists->reverse(entries);
+		eoff := eend.offset+big eend.csize;
+		length := int (eoff-soff);
+		dbuf := array[length] of byte;
+		if(sys->seek(rl.dfd, soff, Sys->SEEKSTART) != soff)
+			return (nil, nil, sprint("seek on data file: %r"));
+		n := sys->readn(rl.dfd, dbuf, len dbuf);
+		if(n < 0)
+			return (nil, nil, sprint("reading data file: %r"));
+		if(n != len dbuf)
+			return (nil, nil, sprint("short read on data file: %r"));
+
+		o := 0;
+		for(l := entries; l != nil; l = tl l) {
+			e := hd l;
+			if(o+e.csize > length)
+				return (nil, nil, "size of entry does not match length of data");
+			(buf, derr) := decompress(dbuf[o:o+e.csize]);
+			if(derr != nil)
+				return (nil, nil, derr);
+			bufs = buf::bufs;
+			o += e.csize;
+		}
+		if(o != length)
+			return (nil, nil, "size of entries does not match length of data");
+	}
+
+	return (bufs, hd lists->reverse(entries), nil);
+}
+
+Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, string)
+{
+	say(sprint("revlog.get, rev %d, nodeid %s", rev, nodeid.text()));
+	(bufs, e, err) := get(rl, rev, nodeid);
+	if(err != nil)
+		return (nil, err);
+	return reconstruct(rl, e, bufs);
 }
 
 Revlog.filelength(rl: self ref Revlog, nodeid: ref Nodeid): (big, string)
 {
-	say("revlog.filelength, "+nodeid.text());
-	(e, rerr) := rl.findnodeid(nodeid);
-	if(rerr != nil)
-		return (big -1, rerr);
+	say(sprint("revlog.filelength, nodeid %s", nodeid.text()));
+	(bufs, nil, err) := get(rl, -1, nodeid);
+	if(err != nil)
+		return (big -1, err);
+	return reconstructlength(bufs);
+}
 
-	(d, derr) := getentryrev(rl, e.base);
-	if(derr != nil)
-		return (big -1, "base: "+derr);
-	n := len d;
-	d = nil;
+Revlog.getrev(rl: self ref Revlog, rev: int): (array of byte, string)
+{
+	return rl.get(rev, nil);
+}
 
-	for(i := e.base+1; i <= e.rev; i++) {
-		(diff, err) := getentryrev(rl, i);
-		if(err != nil)
-			return (big -1, "diff: "+err);
+Revlog.getnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string)
+{
+	return rl.get(-1, nodeid);
+}
 
-		say(sprint("diff (base %d, i %d, rev %d)...", e.base, i, e.rev));
-		(p, perr) := Patch.parse(diff);
-		if(perr != nil)
-			return (big -1, sprint("error decoding patch: %s", perr));
+findentry(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
+{
+	findlast := rev < 0 && nodeid == nil;
+	if(rev < 0 && nodeid != nil)
+		rev = cachefindnodeid(rl, nodeid);
+	if(rev >= 0 && rl.entrycache != nil && rev < len rl.entrycache)
+		return (rl.entrycache[rev], nil);
+	if(rev >= 0 && !rl.isindexonly())
+		return readentry(rl.ifd, big (rev*Entrysize), rev);
 
-		n += p.sizediff();
+	# either we are looking for a nodeid or last entry (rev < 0); or rev >= and we have an .i-only file
+	# in both cases, we can skip the nodeids that are already in the case.
+	ioff := big 0;
+	ioffrev := 0;
+	if(findlast && len rl.nodeidcache > 0) {
+		if(rl.isindexonly())
+			(ioff, ioffrev) = (rl.entrycache[len rl.entrycache-1].ioffset-big Entrysize, len rl.entrycache-1);
+		else
+			(ioff, ioffrev) = (big ((len rl.nodeidcache-1)*Entrysize), len rl.nodeidcache-1);
 	}
-	return (big n, nil);
+
+	mode := 0;
+	if(findlast)
+		mode = Mfindlast;
+	(nil, entries, err) := readindex(rl, ioff, ioffrev, rev, nodeid, mode);
+	if(err != nil)
+		return (nil, err);
+	return (hd entries, nil);
+}
+
+Revlog.find(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
+{
+	say(sprint("revlog.find, rev %d, nodeid %s", rev, nodeid.text()));
+	return findentry(rl, rev, nodeid);
+}
+
+Revlog.findrev(rl: self ref Revlog, rev: int): (ref Entry, string)
+{
+	return rl.find(rev, nil);
+}
+
+Revlog.findnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string)
+{
+	return rl.find(-1, nodeid);
+}
+
+Revlog.lastrev(rl: self ref Revlog): (int, string)
+{
+	if(!rl.isindexonly()) {
+		say("repo.lastrev, using fstat");
+		(ok, d) := sys->fstat(rl.ifd);
+		if(ok != 0)
+			return (-1, sprint("fstat index file: %r"));
+		if(d.length == big 0)
+			return (-1, "empty index file?");
+		if(d.length % big Entrysize != big 0)
+			return (-1, "index file not multiple of size of entry");
+		return (int (d.length/big Entrysize - big 1), nil);
+	}
+
+	say("repo.lastrev, using readindex");
+	(e, err) := findentry(rl, -1, nil);
+	if(err != nil)
+		return (-1, err);
+	return (e.rev, nil);
 }
 
 
@@ -486,7 +594,7 @@ Repo.open(path: string): (ref Repo, string)
 		return (nil, sprint("stat %q: %r", namepath));
 	name := dir.name;
 
-	repo := ref Repo(path, requires, name);
+	repo := ref Repo(path, requires, name, -1, -1);
 	if(repo.isstore() && !isdir(path+"/store"))
 		return (nil, "missing directory \".hg/store\"");
 	if(!repo.isstore() && !isdir(path+"/data"))
@@ -575,7 +683,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	(cl, clerr) := Revlog.open(clpath);
 	if(clerr != nil)
 		return (nil, nil, clerr);
-	(nil, cdata, clderr) := cl.getrev(rev);
+	(cdata, clderr) := cl.get(rev, nil);
 	if(clderr != nil)
 		return (nil, nil, clderr);
 
@@ -590,7 +698,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	if(mrlerr != nil)
 		return (nil, nil, mrlerr);
 	
-	(nil, mdata, mderr) := mrl.getnodeid(c.manifestnodeid);
+	(mdata, mderr) := mrl.get(-1, c.manifestnodeid);
 	if(mderr != nil)
 		return (nil, nil, mderr);
 
@@ -608,10 +716,7 @@ Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byt
 	(rl, rlerr) := Revlog.open(rlpath);
 	if(rlerr != nil)
 		return (nil, rlerr);
-	(nil, data, derr) := rl.getnodeid(nodeid);
-	if(derr != nil)
-		return (nil, derr);
-	return (data, nil);
+	return rl.get(-1, nodeid);
 }
 
 Repo.lastrev(r: self ref Repo): (int, string)
@@ -621,10 +726,19 @@ Repo.lastrev(r: self ref Repo): (int, string)
 	if(clerr != nil)
 		return (-1, clerr);
 
-	(e, rerr) := cl.lastrev();
+	(ok, d) := sys->fstat(cl.ifd);
+	if(ok != 0)
+		return (-1, sprint("fstat changelog index: %r"));
+
+	if(r.lastrevision >= 0 && d.mtime <= r.lastmtime)
+		return (r.lastrevision, nil);
+
+	(rev, rerr) := cl.lastrev();
 	if(rerr != nil)
 		return (-1, rerr);
-	return (e.rev, nil);
+	r.lastrevision = rev;
+	r.lastmtime = d.mtime;
+	return (rev, nil);
 }
 
 Repo.change(r: self ref Repo, rev: int): (ref Change, string)
@@ -633,7 +747,7 @@ Repo.change(r: self ref Repo, rev: int): (ref Change, string)
 	(cl, clerr) := Revlog.open(clpath);
 	if(clerr != nil)
 		return (nil, clerr);
-	(nil, cdata, clderr) := cl.getrev(rev);
+	(cdata, clderr) := cl.getrev(rev);
 	if(clderr != nil)
 		return (nil, clderr);
 
@@ -776,14 +890,17 @@ Entry.parse(buf: array of byte, index: int): (ref Entry, string)
 	(e.uncsize, o) = g32(buf, o);
 	(e.base, o) = g32(buf, o);
 	(e.link, o) = g32(buf, o);
-	(e.p1, o) = g32(buf, o); # xxx set to ffffffff?
-	(e.p2, o) = g32(buf, o); # idem
+	(e.p1, o) = g32(buf, o);
+	(e.p2, o) = g32(buf, o);
 	node := array[20] of byte;
 	node[:] = buf[o:o+20];
 	e.nodeid = ref Nodeid(node);
 	o += 20;
 	if(len buf-o != 12)
 		return (nil, "wrong number of superfluous bytes");
+
+	if(e.p1 >= e.rev || e.p2 >= e.rev || e.base > e.rev)
+		return (nil, "bad revision value for parent or base revision");
 	
 	return (e, nil);
 }

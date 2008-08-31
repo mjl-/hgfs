@@ -6,8 +6,14 @@ TARG=\
 MODULES=\
 
 SYSMODULES=\
+	mercurial.m\
 	sys.m\
 	bufio.m\
+	daytime.m\
+	filter.m\
+	keyring.m\
+	lists.m\
+	string.m\
 
 DISBIN=$ROOT/dis/lib
 

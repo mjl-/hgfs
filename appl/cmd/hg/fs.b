@@ -3,6 +3,7 @@ implement HgFs;
 # todo
 # - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
 # - show parents of a revision?
+# - fix tgz "unexpected end of file"
 
 include "sys.m";
 	sys: Sys;
@@ -333,7 +334,19 @@ again:
 				op.reply <-= (dir(child(q)|big rev<<32, revmtime(rev)), nil);
 
 			Qtgz =>
-				op.reply <-= (dir(child(q)|big rev<<32, revmtime(rev)), nil);
+				name := reponame+"-";
+				if(!str->prefix(name, op.name) || !suffix(".tgz", op.name)) {
+					op.reply <-= (nil, styxservers->Enotfound);
+					continue again;
+				}
+				revstr := op.name[len name:len op.name-len ".tgz"];
+				err: string;
+				(rev, err) = parserev(revstr);
+				if(err != nil) {
+					op.reply <-= (nil, styxservers->Enotfound);
+					continue again;
+				}
+				op.reply <-= (dir(child(q)|big rev<<32, revmtime(rev)), err);
 
 			* =>
 				raise sprint("unhandled case in walk %q, from %d", op.name, q);
@@ -388,15 +401,10 @@ revgen(path: big): (int, int)
 
 revmtime(rev: int): int
 {
-	mtime := treemtimeget(rev);
-	if(mtime < 0) {
-		(c, err) := repo.change(rev);
-		if(err != nil)
-			warn(sprint("revmtime, rev %d: %s", rev, err));
-		else
-			mtime = c.when+c.tzoff;
-	}
-	return mtime;
+	(rt, err) := treeget(rev);
+	if(err != nil)
+		return -1;
+	return rt.mtime;
 }
 
 
@@ -443,7 +451,7 @@ dir(path: big, mtime: int): ref Sys->Dir
 	q := int path&16rff;
 	(rev, gen) := revgen(path);
 	(nil, name, perm) := tab[q];
-	say(sprint("dir, path %bd, name %q", path, name));
+	say(sprint("dir, path %bd, name %q, rev %d, gen %d", path, name, rev, gen));
 
 	d := ref sys->zerodir;
 	d.name = name;
@@ -503,14 +511,6 @@ treeget(rev: int): (ref Revtree, string)
 	}
 	rt.used = treeusegen++;
 	return (rt, nil);
-}
-
-treemtimeget(rev: int): int
-{
-	rt := revtreetab.find(rev);
-	if(rt == nil)
-		return -1;
-	return rt.mtime;
 }
 
 # lru, inefficient..
@@ -862,7 +862,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 	if(off != t.tgzoff)
 		return (nil, "random reads on .tgz's not supported");
 
-	if(t.mf == nil && len t.data == 0)
+	if(t.mf == nil && len t.data == 0 && len t.tgzdata == 0)
 		return (array[0] of byte, nil);
 
 	if(len t.tgzdata == 0) {
@@ -932,6 +932,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 	r[:] = t.tgzdata[:give];
 	t.tgzdata = rem;
 	t.tgzoff += big give;
+	say(sprint("tgz.read, gave %d bytes, remaining len t.tgzdata %d", give, len t.tgzdata));
 	return (r, nil);
 }
 

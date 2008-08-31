@@ -39,7 +39,7 @@ Mercurial: module {
 	Entry: adt {
 		rev:	int;
 		offset:	big;
-		ioffset:	big;  # when .d is not present, offset has value as if it were.  ioffset is compensated for that, and points to real data offset in .i file
+		ioffset:	big;  # when .d is not present, offset has value as if it were.  ioffset is compensates for that, and points to real data offset in .i file
 		flags:	int;
 		csize:	int;
 		uncsize:	int;
@@ -50,7 +50,6 @@ Mercurial: module {
 		text:	fn(e: self ref Entry): string;
 	};
 
-
 	# Revlog.flags
 	Indexonly: con 1<<iota;
 
@@ -58,24 +57,28 @@ Mercurial: module {
 		path:	string;
 		ifd, dfd:	ref Sys->FD;
 		version, flags: int;
-		nodes:	list of (int, ref Nodeid);
+		nodeidcache:	array of ref Nodeid;
+		entrycache:	array of ref Entry;  # only when Indexonly
+		icacheoff:	big;  # offset in .i-file where uncached entries start
 
 		open:	fn(path: string): (ref Revlog, string);
 		isindexonly:	fn(rl: self ref Revlog): int;
+		get:	fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, string);
+		getrev:	fn(rl: self ref Revlog, rev: int): (array of byte, string);
+		getnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string);
+		lastrev:	fn(rl: self ref Revlog): (int, string);
+		find:	fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string);
+		findnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string);
 		findrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, string);
-		findnodeid:	fn(rl: self ref Revlog, n: ref Nodeid): (ref Entry, string);
-		getentry:	fn(rl: self ref Revlog, e: ref Entry): (array of byte, string);
-		getfile:	fn(rl: self ref Revlog, e: ref Entry): (array of byte, string);
-		getrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, array of byte, string);
-		getnodeid:	fn(rl: self ref Revlog, n: ref Nodeid): (ref Entry, array of byte, string);
-		lastrev:	fn(rl: self ref Revlog): (ref Entry, string);
-		filelength:	fn(rl: self ref Revlog, n: ref Nodeid): (big, string);
+		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
 	};
 
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
 		reponame: 	string;
+		lastrevision:	int;
+		lastmtime:	int;
 
 		open:		fn(path: string): (ref Repo, string);
 		find:		fn(path: string): (ref Repo, string);
