@@ -3,7 +3,6 @@ implement HgFs;
 # todo
 # - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
 # - show parents of a revision?
-# - fix tgz "unexpected end of file"
 
 include "sys.m";
 	sys: Sys;
@@ -831,6 +830,7 @@ Tgz: adt {
 	mf:	list of ref Manifestfile;  # remaining files
 
 	tgzdata:	array of byte;  # output from filter
+	eof:	int;  # whether we've seen filters finished message
 
 	new:	fn(rev: int): (ref Tgz, string);
 	read:	fn(t: self ref Tgz, n: int, off: big): (array of byte, string);
@@ -851,7 +851,7 @@ Tgz.new(rev: int): (ref Tgz, string)
 	* =>		fail(sprint("bogus first message from deflate"));
 	}
 
-	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, array[0] of byte);
+	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, array[0] of byte, 0);
 	return (t, nil);
 }
 
@@ -862,10 +862,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 	if(off != t.tgzoff)
 		return (nil, "random reads on .tgz's not supported");
 
-	if(t.mf == nil && len t.data == 0 && len t.tgzdata == 0)
-		return (array[0] of byte, nil);
-
-	if(len t.tgzdata == 0) {
+	if(!t.eof && len t.tgzdata == 0) {
 		# handle filter msgs until we find either result, finished, or error
 	next:
 		for(;;) {
@@ -911,12 +908,17 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 				t.tgzdata[:] = m.buf;
 				m.reply <-= 1;
 				break next;
+
 			Finished =>
 				if(len m.buf != 0)
 					raise "deflate had leftover data...";
+				say("tgz.read, finished...");
+				t.eof = 1;
 				break next;
+
 			Info =>
 				say("inflate info: "+m.msg);
+
 			Error =>
 				return (nil, m.e);
 			}
