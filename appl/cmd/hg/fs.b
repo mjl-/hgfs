@@ -38,13 +38,14 @@ include "mercurial.m";
 Dflag, dflag: int;
 vflag: int;
 
-Qroot, Qlastrev, Qfiles, Qlog, Qtgz, Qrepofile, Qlogrev, Qtgzrev: con iota;
+Qroot, Qlastrev, Qfiles, Qlog, Qtgz, Qstate, Qrepofile, Qlogrev, Qtgzrev: con iota;
 tab := array[] of {
 	(Qroot,		"<reponame>",	Sys->DMDIR|8r555),
 	(Qlastrev,	"lastrev",	8r444),
 	(Qfiles,	"files",	Sys->DMDIR|8r555),
 	(Qlog,		"log",		Sys->DMDIR|8r555),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
+	(Qstate,	"state",	8r444),
 	(Qrepofile,	"<repofile>",	8r555),
 	(Qlogrev,	"<logrev>",	8r444),
 	(Qtgzrev,	"<tgzrev>",	8r444),
@@ -217,6 +218,44 @@ dostyx(gm: ref Tmsg)
 				return replyerror(m, err);
 			srv.reply(styxservers->readbytes(m, d));
 
+		Qstate =>
+			s := sprint("reponame %q\nrevtree size %d max %d\nfiles size %d max %d\n", reponame, revtreesize, revtreemax, filecachesize, filecachemax);
+
+			tgzstr := "";
+			ntgz := 0;
+			for(i := 0; i < len tgztab.items; i++) {
+				for(l := tgztab.items[i]; l != nil; l = tl l) {
+					e := (hd l).t1;
+					tgzstr += sprint("tgz rev %d tgzoff %bd eof %d len data %d len tgzdata %d\n", e.rev, e.tgzoff, e.eof, len e.data, len e.tgzdata);
+					ntgz++;
+				}
+			}
+			s += sprint("tgztab: %d files\n", ntgz)+tgzstr;
+
+			rtstr := "";
+			nrt := 0;
+			for(i = 0; i < len revtreetab.items; i++) {
+				for(l := revtreetab.items[i]; l != nil; l = tl l) {
+					rt := (hd l).t1;
+					rtstr += sprint("revtree rev %d nfiles %d mtime %d used %d\n", rt.rev, len rt.tree, rt.mtime, rt.used);
+					nrt++;
+				}
+			}
+			s += sprint("revtreetab: %d revtrees\n", nrt)+rtstr;
+
+			nodestr := "";
+			nnodes := 0;
+			for(i = 0; i < len filetab.items; i++) {
+				for(l := filetab.items[i]; l != nil; l = tl l) {
+					n := (hd l).t1;
+					nodestr += sprint("file nodeid %s len data %d used %d\n", n.nodeid.text(), len n.data, n.used);
+					nnodes++;
+				}
+			}
+			s += sprint("filetab: %d files\n", nnodes)+nodestr;
+
+			srv.reply(styxservers->readstr(m, s));
+
 		* =>
 			replyerror(m, styxservers->Eperm);
 		}
@@ -287,7 +326,7 @@ again:
 
 			case q {
 			Qroot =>
-				for(i := Qlastrev; i <= Qtgz; i++)
+				for(i := Qlastrev; i <= Qstate; i++)
 					if(tab[i].t1 == op.name) {
 						op.reply <-= (dir(big tab[i].t0, starttime), nil);
 						continue again;
