@@ -1,6 +1,7 @@
 implement Mercurial;
 
 # todo
+# - for to detect when .i-only is changed into using .d;  have to invalidate/fix cache
 # - revlog revision & flags in .i?
 # - flags in manifest?  like file mode (permissions)?
 # - symlinks, other file types?
@@ -92,11 +93,18 @@ getline(b: ref Iobuf): string
 
 nullchange: Change;
 
-Change.parse(data: array of byte): (ref Change, string)
+Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 {
 	say("change.parse");
 
 	c := ref nullchange;
+	c.rev = e.rev;
+	c.p1 = e.p1;
+	c.p2 = e.p2;
+	if(c.p1 == Nullnode)
+		c.p1 = -1;
+	if(c.p2 == Nullnode)
+		c.p2 = -1;
 
 	b := bufio->aopen(data);
 
@@ -147,6 +155,15 @@ Change.parse(data: array of byte): (ref Change, string)
 Change.text(c: self ref Change): string
 {
 	s := "";
+	s += sprint("revision: %d\n", c.rev);
+	pstr := "";
+	if(c.p1 == -1 && c.p2 == -1)
+		pstr = "  none";
+	if(c.p1 != -1)
+		pstr += ", "+string c.p1;
+	if(c.p2 != -1)
+		pstr += ", "+string c.p2;
+	s += "parents: "+pstr[2:]+"\n";
 	s += sprint("manifest nodeid: %s\n", c.manifestnodeid.text());
 	s += sprint("committer: %s\n", c.who);
 	when := daytime->gmt(c.when);
@@ -474,13 +491,17 @@ get(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (list of array of byte, ref E
 	return (bufs, hd lists->reverse(entries), nil);
 }
 
-Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, string)
+Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, ref Entry, string)
 {
 	say(sprint("revlog.get, rev %d, nodeid %s", rev, nodeid.text()));
 	(bufs, e, err) := get(rl, rev, nodeid);
 	if(err != nil)
-		return (nil, err);
-	return reconstruct(rl, e, bufs);
+		return (nil, nil, err);
+	data: array of byte;
+	(data, err) = reconstruct(rl, e, bufs);
+	if(err != nil)
+		data = nil;
+	return (data, e, err);
 }
 
 Revlog.filelength(rl: self ref Revlog, nodeid: ref Nodeid): (big, string)
@@ -494,12 +515,14 @@ Revlog.filelength(rl: self ref Revlog, nodeid: ref Nodeid): (big, string)
 
 Revlog.getrev(rl: self ref Revlog, rev: int): (array of byte, string)
 {
-	return rl.get(rev, nil);
+	(d, nil, err) := rl.get(rev, nil);
+	return (d, err);
 }
 
 Revlog.getnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string)
 {
-	return rl.get(-1, nodeid);
+	(d, nil, err) := rl.get(-1, nodeid);
+	return (d, err);
 }
 
 findentry(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
@@ -683,11 +706,11 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	(cl, clerr) := Revlog.open(clpath);
 	if(clerr != nil)
 		return (nil, nil, clerr);
-	(cdata, clderr) := cl.get(rev, nil);
+	(cdata, ce, clderr) := cl.get(rev, nil);
 	if(clderr != nil)
 		return (nil, nil, clderr);
 
-	(c, cerr) := Change.parse(cdata);
+	(c, cerr) := Change.parse(cdata, ce);
 	if(cerr != nil)
 		return (nil, nil, cerr);
 
@@ -698,7 +721,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	if(mrlerr != nil)
 		return (nil, nil, mrlerr);
 	
-	(mdata, mderr) := mrl.get(-1, c.manifestnodeid);
+	(mdata, mderr) := mrl.getnodeid(c.manifestnodeid);
 	if(mderr != nil)
 		return (nil, nil, mderr);
 
@@ -716,7 +739,7 @@ Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byt
 	(rl, rlerr) := Revlog.open(rlpath);
 	if(rlerr != nil)
 		return (nil, rlerr);
-	return rl.get(-1, nodeid);
+	return rl.getnodeid(nodeid);
 }
 
 Repo.lastrev(r: self ref Repo): (int, string)
@@ -747,11 +770,11 @@ Repo.change(r: self ref Repo, rev: int): (ref Change, string)
 	(cl, clerr) := Revlog.open(clpath);
 	if(clerr != nil)
 		return (nil, clerr);
-	(cdata, clderr) := cl.getrev(rev);
+	(cdata, e, clderr) := cl.get(rev, nil);
 	if(clderr != nil)
 		return (nil, clderr);
 
-	(c, cerr) := Change.parse(cdata);
+	(c, cerr) := Change.parse(cdata, e);
 	return (c, cerr);
 }
 

@@ -2,7 +2,6 @@ implement HgFs;
 
 # todo
 # - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
-# - show parents of a revision?
 
 include "sys.m";
 	sys: Sys;

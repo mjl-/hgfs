@@ -14,13 +14,15 @@ Mercurial: module {
 	};
 
 	Change: adt {
+		rev:	int;
+		p1, p2:	int;
 		manifestnodeid:	ref Nodeid;
 		who:	string;
 		when, tzoff:	int;
 		files:	list of string;
 		msg:	string;
 
-		parse:	fn(data: array of byte): (ref Change, string);
+		parse:	fn(data: array of byte, e: ref Entry): (ref Change, string);
 		text:	fn(c: self ref Change): string;
 	};
 
@@ -63,7 +65,7 @@ Mercurial: module {
 
 		open:	fn(path: string): (ref Revlog, string);
 		isindexonly:	fn(rl: self ref Revlog): int;
-		get:	fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, string);
+		get:	fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, ref Entry, string);
 		getrev:	fn(rl: self ref Revlog, rev: int): (array of byte, string);
 		getnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string);
 		lastrev:	fn(rl: self ref Revlog): (int, string);
