@@ -168,7 +168,7 @@ Change.text(c: self ref Change): string
 	s += sprint("committer: %s\n", c.who);
 	when := daytime->gmt(c.when);
 	when.tzoff = c.tzoff;
-	s += sprint("date: %s\n", daytime->text(when));
+	s += sprint("date: %s; %d %d\n", daytime->text(when), c.when, c.tzoff);
 	s += sprint("files changed:\n");
 	for(l := c.files; l != nil; l = tl l)
 		s += sprint("%s\n", hd l);

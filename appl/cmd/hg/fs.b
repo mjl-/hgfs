@@ -2,6 +2,8 @@ implement HgFs;
 
 # todo
 # - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
+# - cache Changes?  for reading log/*
+# - add another tree that lists .i(/.d) files.  reading them gives back revision numbers
 
 include "sys.m";
 	sys: Sys;
