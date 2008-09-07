@@ -3,6 +3,7 @@ implement HgFs;
 # todo
 # - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
 # - cache Changes?  for reading log/*
+# - cache Manifest?
 # - add another tree that lists .i(/.d) files.  reading them gives back revision numbers
 
 include "sys.m";
@@ -39,16 +40,18 @@ include "mercurial.m";
 Dflag, dflag: int;
 vflag: int;
 
-Qroot, Qlastrev, Qfiles, Qlog, Qtgz, Qstate, Qrepofile, Qlogrev, Qtgzrev: con iota;
+Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtgz, Qstate, Qrepofile, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
 tab := array[] of {
 	(Qroot,		"<reponame>",	Sys->DMDIR|8r555),
 	(Qlastrev,	"lastrev",	8r444),
 	(Qfiles,	"files",	Sys->DMDIR|8r555),
 	(Qlog,		"log",		Sys->DMDIR|8r555),
+	(Qmanifest,	"manifest",	Sys->DMDIR|8r555),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
 	(Qstate,	"state",	8r444),
 	(Qrepofile,	"<repofile>",	8r555),
 	(Qlogrev,	"<logrev>",	8r444),
+	(Qmanifestrev,	"<manifestrev>",	8r444),
 	(Qtgzrev,	"<tgzrev>",	8r444),
 };
 
@@ -59,7 +62,7 @@ tab := array[] of {
 # 24 bits revision (<<32)
 # when opening a revision, the file list in the revlog manifest is parsed,
 # and a full file tree (only path names) is created.  gens are assigned
-# incrementally, the root dir has gen 0.  Qtgz and Qlog always have gen 0.
+# incrementally, the root dir has gen 0.  Qtgz, Qlog, Qmanifest always have gen 0.
 # this ensures qids are permanent for a repository.
 
 srv: ref Styxserver;
@@ -190,6 +193,13 @@ dostyx(gm: ref Tmsg)
 				return replyerror(m, err);
 			srv.reply(styxservers->readstr(m, change.text()));
 
+		Qmanifestrev =>
+			(rev, nil) := revgen(f.path);
+			(nil, man, err) := repo.manifest(rev);
+			if(err != nil)
+				return replyerror(m, err);
+			srv.reply(styxservers->readstr(m, manifesttext(man)));
+
 		Qtgzrev =>
 			(rev, nil) := revgen(f.path);
 
@@ -318,6 +328,7 @@ again:
 				nq: int;
 				case q {
 				Qlogrev =>	nq = Qlog;
+				Qmanifestrev =>	nq = Qmanifest;
 				Qtgzrev =>	nq = Qtgz;
 				* =>		nq = Qroot;
 				}
@@ -358,7 +369,7 @@ again:
 				else
 					op.reply <-= r.stat(0);
 
-			Qlog =>
+			Qlog or Qmanifest =>
 				err: string;
 				if(op.name == "last")
 					(rev, err) = repo.lastrev();
@@ -401,7 +412,7 @@ again:
 					op.reply <-= (dir(big (Qlastrev+i), starttime), nil);
 					have++;
 				}
-			Qfiles or Qlog or Qtgz =>
+			Qfiles or Qlog or Qmanifest or Qtgz =>
 				if(op.offset == 0 && op.count > 0) {
 					(npath, mtime, err) := last(q);
 					if(err != nil) {
@@ -409,7 +420,7 @@ again:
 						continue again;
 					}
 					d := dir(npath, mtime);
-					if(q == Qfiles || q == Qlog)
+					if(q == Qfiles || q == Qlog || q == Qmanifest)
 						d.name = "last";
 					op.reply <-= (d, nil);
 				}
@@ -457,6 +468,7 @@ last(q: int): (big, int, string)
 	case q {
 	Qfiles => 	nq = Qrepofile;
 	Qlog =>		nq = Qlogrev;
+	Qmanifest =>	nq = Qmanifestrev;
 	Qtgz =>		nq = Qtgzrev;
 	* =>		raise sprint("bogus call 'last' on q %d", q);
 	}
@@ -468,6 +480,7 @@ child(q: int): big
 	case q {
 	Qfiles =>	return big Qrepofile;
 	Qlog =>		return big Qlogrev;
+	Qmanifest =>	return big Qmanifestrev;
 	Qtgz =>		return big Qtgzrev;
 	* =>	raise sprint("bogus call 'child' on q %d", q);
 	}
@@ -494,7 +507,7 @@ dir(path: big, mtime: int): ref Sys->Dir
 
 	d := ref sys->zerodir;
 	d.name = name;
-	if(q == Qlogrev)
+	if(q == Qlogrev || q == Qmanifestrev)
 		d.name = sprint("%d", rev);
 	if(q == Qtgzrev)
 		d.name = sprint("%s-%d.tgz", reponame, rev);
@@ -513,6 +526,14 @@ dir(path: big, mtime: int): ref Sys->Dir
 replyerror(m: ref Tmsg, s: string)
 {
 	srv.reply(ref Rmsg.Error(m.tag, s));
+}
+
+manifesttext(m: ref Manifest): string
+{
+	s := "";
+	for(l := m.files; l != nil; l = tl l)
+		s += (hd l).path+"\n";
+	return s;
 }
 
 # lru, should be done more efficiently
