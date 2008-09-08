@@ -3,9 +3,6 @@ implement Mercurial;
 # todo
 # - for to detect when .i-only is changed into using .d;  have to invalidate/fix cache
 # - revlog revision & flags in .i?
-# - flags in manifest?  like file mode (permissions)?
-# - symlinks, other file types?
-# - long entries in manifest?
 
 include "sys.m";
 	sys: Sys;
@@ -195,17 +192,20 @@ Manifest.parse(d: array of byte): (ref Manifest, string)
 	while(len d > 0) {
 		(line, d) = split(d, byte '\n');
 		(path, nodeid) := split(line, byte '\0');
+		flags := 0;
 		if(len nodeid > 40) {
-			say(sprint("long: %s", hex(line)));
-			say(sprint("nodeid=%q path=%q", hex(nodeid[:40]), string path));
-			say(sprint("end=%q", string nodeid[40:]));
-			# xxx
-			return (nil, "long entry in manifest");
-		} else {
-			say(sprint("nodeid=%q path=%q", string nodeid, string path));
-			mf := ref Manifestfile(string path, 0, ref Nodeid(unhex(string nodeid)));
-			files = mf::files;
+			case flagstr := string nodeid[40:] {
+			"l" =>	flags = Flink;
+			"x" =>	flags = Fexec;
+			"lx" or "xl" =>	flags = Flink|Fexec;
+			* =>	return (nil, sprint("unknown flags: %q", flagstr));
+			}
+			nodeid = nodeid[:40];
+			say(sprint("flags=%x", flags));
 		}
+		say(sprint("nodeid=%q path=%q", string nodeid, string path));
+		mf := ref Manifestfile(string path, 0, ref Nodeid(unhex(string nodeid)), flags);
+		files = mf::files;
 	}
 	files = lists->reverse(files);
 	return (ref Manifest(files), nil);

@@ -631,6 +631,7 @@ Node: adt {
 File: adt {
 	gen:	int;
 	path:	string;
+	mode:	int;
 	pick {
 	Plain =>
 		nodeid:	ref Nodeid;	# nil for directories
@@ -640,24 +641,19 @@ File: adt {
 		files:	array of int;	# gens of files
 	}
 
-	new:	fn(gen: int, path: string, nodeid: ref Nodeid): ref File;
-	mode:	fn(f: self ref File): int;
+	new:	fn(gen: int, path: string, nodeid: ref Nodeid, flags: int): ref File;
 	text:	fn(f: self ref File): string;
 };
 
-File.new(gen: int, path: string, nodeid: ref Nodeid): ref File
+File.new(gen: int, path: string, nodeid: ref Nodeid, flags: int): ref File
 {
-	if(nodeid == nil)
-		return ref File.Dir(gen, path, nil);
-	else
-		return ref File.Plain(gen, path, nodeid, -1, -1);
-}
-
-File.mode(f: self ref File): int
-{
-	pick ff := f {
-	Plain =>	return 8r444;
-	Dir =>		return 8r555|Sys->DMDIR;
+	if(nodeid == nil) {
+		return ref File.Dir(gen, path, 8r555|Sys->DMDIR, nil);
+	} else {
+		mode := 8r444;
+		if(flags & Mercurial->Flink)
+			mode |= 8r111;
+		return ref File.Plain(gen, path, mode, nodeid, -1, -1);
 	}
 }
 
@@ -705,7 +701,7 @@ gendirs(prevdir: string, gen: int, path: string): (string, int, list of ref File
 		s += "/"+hd el;
 		if(str->prefix(s[1:], prevdir))
 			continue;  # already present
-		dirs = File.new(gen++, s[1:], nil)::dirs;
+		dirs = File.new(gen++, s[1:], nil, 0)::dirs;
 	}
 
 	return (path, gen, dirs);
@@ -717,13 +713,13 @@ Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 	prevdir: string;  # previous dir we generated
 
 	gen := 0;
-	r := File.new(gen++, "", nil)::nil;
+	r := File.new(gen++, "", nil, 0)::nil;
 	for(l := mf.files; l != nil; l = tl l) {
 		m := hd l;
 		(nprevdir, ngen, dirs) := gendirs(prevdir, gen, m.path);
 		(prevdir, gen) = (nprevdir, ngen);
 		r = lists->concat(dirs, r);
-		r = File.new(gen++, m.path, m.nodeid)::r;
+		r = File.new(gen++, m.path, m.nodeid, m.flags)::r;
 	}
 	rt := ref Revtree (rev, l2a(lists->reverse(r)), c.when+c.tzoff, 0);
 	say(sprint("revtree.new done, have %d paths:", len r));
@@ -858,7 +854,7 @@ Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
 		d.mtime = d.atime = r.mtime;
 	}
 
-	d.mode = f.mode();
+	d.mode = f.mode;
 	say("revtree.stat, done");
 	return (d, nil);
 }

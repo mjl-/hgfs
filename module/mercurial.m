@@ -26,10 +26,12 @@ Mercurial: module {
 		text:	fn(c: self ref Change): string;
 	};
 
+	Flink, Fexec:	con 1<<iota;  # Manifestfile.flags
 	Manifestfile: adt {
 		path:	string;
 		mode:	int;
 		nodeid:	ref Nodeid;
+		flags:	int;
 	};
 
 	Manifest: adt {
