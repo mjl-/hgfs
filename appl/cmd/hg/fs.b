@@ -49,7 +49,7 @@ tab := array[] of {
 	(Qmanifest,	"manifest",	Sys->DMDIR|8r555),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
 	(Qstate,	"state",	8r444),
-	(Qrepofile,	"<repofile>",	8r555),
+	(Qrepofile,	"<repofile>",	Sys->DMDIR|8r555),
 	(Qlogrev,	"<logrev>",	8r444),
 	(Qmanifestrev,	"<manifestrev>",	8r444),
 	(Qtgzrev,	"<tgzrev>",	8r444),
