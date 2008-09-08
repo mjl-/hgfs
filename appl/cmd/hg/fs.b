@@ -2,9 +2,8 @@ implement HgFs;
 
 # todo
 # - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
-# - cache Changes?  for reading log/*
-# - cache Manifest?
 # - add another tree that lists .i(/.d) files.  reading them gives back revision numbers
+# - ensure procs die when unmounting
 
 include "sys.m";
 	sys: Sys;
@@ -76,6 +75,9 @@ revtreemax := 64;
 filetab: ref Strhash[ref Node];
 filecachesize := 0;
 filecachemax := 512*1024;
+changetab, manifesttab: ref Revcache;
+changecachemax := 24*1024;
+manifestcachemax := 8*1024;
 
 HgFs: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -104,13 +106,15 @@ init(nil: ref Draw->Context, args: list of string)
 	sys->pctl(Sys->NEWPGRP, nil);
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-Ddv] [-c revcache] [-C filecache] [-h path]");
+	arg->setusage(arg->progname()+" [-Ddv] [-C changecache] [-F filecache] [-M manifestcache] [-T revcache] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'D' =>	Dflag++;
 			styxservers->traceset(Dflag);
-		'c' =>	revtreemax = int arg->earg();
-		'C' =>	filecachemax = int arg->earg();
+		'C' =>	changecachemax = int arg->earg();
+		'F' =>	filecachemax = int arg->earg();
+		'M' =>	manifestcachemax = int arg->earg();
+		'T' =>	revtreemax = int arg->earg();
 		'd' =>	dflag++;
 			if(dflag > 1)
 				mercurial->debug++;
@@ -135,6 +139,8 @@ init(nil: ref Draw->Context, args: list of string)
 	tgztab = tgztab.new(32, nil);
 	revtreetab = revtreetab.new(1+revtreemax/16, nil);
 	filetab = filetab.new(1+filecachemax/16, nil);
+	changetab = Revcache.new(changecachemax);
+	manifesttab = Revcache.new(manifestcachemax);
 
 	navch := chan of ref Navop;
 	spawn navigator(navch);
@@ -143,11 +149,16 @@ init(nil: ref Draw->Context, args: list of string)
 	msgc: chan of ref Tmsg;
 	(msgc, srv) = Styxserver.new(sys->fildes(0), nav, big Qroot);
 
+	spawn styxsrv(msgc);
+}
+
+styxsrv(msgc: chan of ref Tmsg)
+{
 done:
 	for(;;) alt {
 	gm := <-msgc =>
 		if(gm == nil)
-			break;
+			break done;
 		pick m := gm {
 		Readerror =>
 			warn("read error: "+m.error);
@@ -155,6 +166,7 @@ done:
 		}
 		dostyx(gm);
 	}
+	killgrp(sys->pctl(0, nil));
 }
 
 dostyx(gm: ref Tmsg)
@@ -188,17 +200,17 @@ dostyx(gm: ref Tmsg)
 
 		Qlogrev =>
 			(rev, nil) := revgen(f.path);
-			(change, err) := repo.change(rev);
+			(data, err) := changeget(rev);
 			if(err != nil)
 				return replyerror(m, err);
-			srv.reply(styxservers->readstr(m, change.text()));
+			srv.reply(styxservers->readbytes(m, data));
 
 		Qmanifestrev =>
 			(rev, nil) := revgen(f.path);
-			(nil, man, err) := repo.manifest(rev);
+			(data, err) := manifestget(rev);
 			if(err != nil)
 				return replyerror(m, err);
-			srv.reply(styxservers->readstr(m, manifesttext(man)));
+			srv.reply(styxservers->readbytes(m, data));
 
 		Qtgzrev =>
 			(rev, nil) := revgen(f.path);
@@ -264,6 +276,8 @@ dostyx(gm: ref Tmsg)
 				}
 			}
 			s += sprint("filetab: %d files\n", nnodes)+nodestr;
+			s += sprint("cachetab: size %d max %d\n", changetab.size, changetab.max);
+			s += sprint("manifesttab: size %d max %d\n", manifesttab.size, manifesttab.max);
 
 			srv.reply(styxservers->readstr(m, s));
 
@@ -534,6 +548,88 @@ manifesttext(m: ref Manifest): string
 	for(l := m.files; l != nil; l = tl l)
 		s += (hd l).path+"\n";
 	return s;
+}
+
+
+Revcache: adt {
+	tab:	ref Table[ref Node];
+	size, max, gen:	int;
+
+	new:	fn(max: int): ref Revcache;
+	find:	fn(r: self ref Revcache, rev: int): ref Node;
+	add:	fn(r: self ref Revcache, rev: int, n: ref Node);
+};
+
+Revcache.new(max: int): ref Revcache
+{
+	t := Table[ref Node].new(32, nil);
+	return ref Revcache(t, 0, max, 0);
+}
+
+Revcache.find(r: self ref Revcache, rev: int): ref Node
+{
+	n := r.tab.find(rev);
+	if(n != nil) {
+		n.used = r.gen++;
+		say(sprint("revcache.find, rev %d, hit, %d bytes", rev, len n.data));
+	} else
+		say(sprint("revcache.find, rev %d, miss", rev));
+	return n;
+}
+
+# lru, should be done more efficiently
+purge(r: ref Revcache): int
+{
+	a := r.tab.items;
+	lastrev := -1;
+	lastn: ref Node;
+	for(i := 0; i < len a; i++)
+		for(l := a[i]; l != nil; l = tl l) {
+			(rev, n) := hd l;
+			if(lastrev == -1 || n.used < lastn.used) {
+				lastrev = rev;
+				lastn = n;
+			}
+		}
+	if(lastrev != -1) {
+		r.tab.del(lastrev);
+		return len lastn.data;
+	}
+	return 0;
+}
+
+Revcache.add(r: self ref Revcache, rev: int, n: ref Node)
+{
+	while(r.size+len n.data > r.max && r.size > 0)
+		r.size -= purge(r);
+	r.tab.add(rev, n);
+	r.size += len n.data;
+}
+
+changeget(rev: int): (array of byte, string)
+{
+	n := changetab.find(rev);
+	if(n == nil) {
+		(c, err) := repo.change(rev);
+		if(err != nil)
+			return (nil, err);
+		n = ref Node(c.nodeid, array of byte c.text(), changetab.gen++);
+		changetab.add(rev, n);
+	}
+	return (n.data, nil);
+}
+
+manifestget(rev: int): (array of byte, string)
+{
+	n := manifesttab.find(rev);
+	if(n == nil) {
+		(nil, m, err) := repo.manifest(rev);
+		if(err != nil)
+			return (nil, err);
+		n = ref Node(m.nodeid, array of byte manifesttext(m), manifesttab.gen++);
+		manifesttab.add(rev, n);
+	}
+	return (n.data, nil);
 }
 
 # lru, should be done more efficiently
@@ -1052,6 +1148,13 @@ l2a[T](l: list of T): array of T
 	for(; l != nil; l = tl l)
 		a[i++] = hd l;
 	return a;
+}
+
+killgrp(pid: int)
+{
+	fd := sys->open(sprint("/prog/%d/ctl", pid), Sys->OWRITE);
+	if(fd != nil)
+		sys->fprint(fd, "killgrp");
 }
 
 kill(pid: int)

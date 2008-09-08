@@ -95,6 +95,7 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 	say("change.parse");
 
 	c := ref nullchange;
+	c.nodeid = e.nodeid;
 	c.rev = e.rev;
 	c.p1 = e.p1;
 	c.p2 = e.p2;
@@ -183,7 +184,7 @@ split(buf: array of byte, b: byte): (array of byte, array of byte)
 	return (buf, array[0] of byte);
 }
 
-Manifest.parse(d: array of byte): (ref Manifest, string)
+Manifest.parse(d: array of byte, n: ref Nodeid): (ref Manifest, string)
 {
 	say("manifest.parse");
 	files: list of ref Manifestfile;
@@ -208,7 +209,7 @@ Manifest.parse(d: array of byte): (ref Manifest, string)
 		files = mf::files;
 	}
 	files = lists->reverse(files);
-	return (ref Manifest(files), nil);
+	return (ref Manifest(n, files), nil);
 }
 
 
@@ -725,7 +726,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	if(mderr != nil)
 		return (nil, nil, mderr);
 
-	(m, merr) := Manifest.parse(mdata);
+	(m, merr) := Manifest.parse(mdata, c.manifestnodeid);
 	if(merr != nil)
 		return (nil, nil, merr);
 

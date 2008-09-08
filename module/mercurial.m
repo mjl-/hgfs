@@ -15,6 +15,7 @@ Mercurial: module {
 
 	Change: adt {
 		rev:	int;
+		nodeid:	ref Nodeid;
 		p1, p2:	int;
 		manifestnodeid:	ref Nodeid;
 		who:	string;
@@ -35,9 +36,10 @@ Mercurial: module {
 	};
 
 	Manifest: adt {
+		nodeid:	ref Nodeid;
 		files:	list of ref Manifestfile;
 
-		parse:	fn(data: array of byte): (ref Manifest, string);
+		parse:	fn(data: array of byte, n: ref Nodeid): (ref Manifest, string);
 	};
 
 	Entry: adt {
