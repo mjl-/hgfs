@@ -1,0 +1,123 @@
+.TH hgfs 1
+.SH NAME
+hg/fs \- mount mercurial repository
+.SH synopsis
+.B hg/fs
+[
+.B -Dd
+] [
+.B -C
+.I changecache
+] [
+.B -F
+.I filecache
+] [
+.B -M
+.I manifestcache
+] [
+.B -T
+.I revcache
+] [
+.B -h
+.I path
+]
+.SH DESCRIPTION
+.B Hg/fs
+reads a mercurial repository and exports its contents over styx.  It allows walking to the files of any revision, read the commit (log) message or manifest for any revision, or read a .tgz snapshot of any revision.
+.SS Options
+.TP
+.B -D
+Print styx traces to standard error.
+.TP
+.B -d
+Print debugging messages, a second
+.B -d
+prints more messages.
+.TP
+.BI -C " changecache"
+Set maximum size of cache for changes (files in
+.IR log/ )
+to
+.I changecache
+bytes.  The default is 24k.
+.TP
+.BI -F " filecache"
+As
+.B -C
+but for files in
+.IR files/ .
+The default is 512k.
+.TP
+.BI -M " manifestcache"
+As
+.B -C
+but for files in
+.IR manifest/ .
+The default is 8k.
+.TP
+.BI -T " revcache"
+As
+.B -C
+but for the internal data structure for a tree of files for a revision.
+.I Revcache
+is the maximum number of such structures, independent of size in bytes.
+The default is 64.
+.TP
+.BI -h " repopath"
+Use the repository at 
+.IR repopath .
+Otherwise,
+.B hg/fs
+looks for a directory
+.BI .hg ,
+first in the current directory and then upwards towards the root of the file system.
+.SS Files
+.TP
+.B lastrev
+Read latest revision.
+.TP
+.BI files/ n / ...
+Access file hierarchy of revision
+.IR n .
+.TP
+.BI log/ n
+Read the log message for revision
+.IR n .
+.TP
+.BI manifest/ n
+Read the manifest for revision
+.IR n .
+.TP
+.BI tgz/ reponame-n.tgz
+Read the .tgz for revision
+.IR n .
+
+.PP
+For each path except
+.BR tgz/ ,
+.I n
+can be ``last'', which will be translated by
+.B hg/fs
+to the latest version at that moment.
+Listing the contents of
+.BR files ", " log " and " manifest
+will return only return the filename ``last'', not all revision numbers.  They can be walked to though.  A
+.IR stat (2)
+on
+.B */last
+will return the last revision number in the name.
+Listing the contents of
+.B tgz/
+returns a single file called
+.IR reponame-n.tgz ,
+where
+.I reponame
+is the directory name containing the repository and
+.I n
+is the latest revision (again, any revision can be read, it is just not listed).
+
+.SH SOURCE
+.B /appl/cmd/hg/fs.b
+.br
+.B /appl/lib/mercurial.b
+.br

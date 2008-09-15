@@ -1,10 +1,5 @@
 implement HgFs;
 
-# todo
-# - improve bookkeeping for revtree:  don't store full path, and keep track of gen of higher directory, for quick walk to ..
-# - add another tree that lists .i(/.d) files.  reading them gives back revision numbers
-# - ensure procs die when unmounting
-
 include "sys.m";
 	sys: Sys;
 	sprint: import sys;
@@ -36,8 +31,7 @@ include "mercurial.m";
 	Revlog, Repo, Nodeid, Change, Manifest, Manifestfile: import mercurial;
 
 
-Dflag, dflag: int;
-vflag: int;
+dflag: int;
 
 Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtgz, Qstate, Qrepofile, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
 tab := array[] of {
@@ -106,11 +100,10 @@ init(nil: ref Draw->Context, args: list of string)
 	sys->pctl(Sys->NEWPGRP, nil);
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-Ddv] [-C changecache] [-F filecache] [-M manifestcache] [-T revcache] [-h path]");
+	arg->setusage(arg->progname()+" [-Dd] [-C changecache] [-F filecache] [-M manifestcache] [-T revcache] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'D' =>	Dflag++;
-			styxservers->traceset(Dflag);
+		'D' =>	styxservers->traceset(1);
 		'C' =>	changecachemax = int arg->earg();
 		'F' =>	filecachemax = int arg->earg();
 		'M' =>	manifestcachemax = int arg->earg();
@@ -118,7 +111,6 @@ init(nil: ref Draw->Context, args: list of string)
 		'd' =>	dflag++;
 			if(dflag > 1)
 				mercurial->debug++;
-		'v' =>	vflag++;
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
 		}

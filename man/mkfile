@@ -1,6 +1,7 @@
 <../mkconfig
 
-MAN=
+MAN=\
+	4/hgfs
 
 <mkman
 

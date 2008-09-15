@@ -1,9 +1,5 @@
 implement Mercurial;
 
-# todo
-# - for to detect when .i-only is changed into using .d;  have to invalidate/fix cache
-# - revlog revision & flags in .i?
-
 include "sys.m";
 	sys: Sys;
 	sprint: import sys;

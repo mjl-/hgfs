@@ -1,0 +1,39 @@
+# intro
+
+hgfs serves the contents of a mercurial repository over styx.  see the
+manual page hgfs(4) for more details.  the code for parsing the mercurial
+repositories is in a separate library (though undocumented), and there
+are a few more small programs that read various information from the
+repositories (also undocumented).
+
+
+# install
+
+first, ensure a "mkconfig" file is present.  a bind/symlink to the
+mkconfig of your inferno install should do.  create the directory
+$ROOT/dis/hg.  now "mk install" to compile and install the files.
+
+
+# latest version
+
+the latest version can be found at:
+
+	http://www.ueber.net/code/r/hgfs
+
+
+# licence & author
+
+all files are in the public domain.  this code has been written by
+mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
+
+
+# todo
+
+- hg/fs: improve bookkeeping for revtree:  don't store full path, and
+  keep track of gen of higher directory, for quick walk to ..
+- hg/fs: add another tree that lists .i(/.d) files.  reading them gives
+  back revision numbers
+
+- library: have to detect when .i-only is changed into using .d;  have
+  to invalidate/fix cache
+- library: understand more revlog revision & flags in .i?
