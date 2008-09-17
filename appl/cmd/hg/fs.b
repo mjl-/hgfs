@@ -976,6 +976,7 @@ Tgz: adt {
 
 	tgzdata:	array of byte;  # output from filter
 	eof:	int;  # whether we've seen filters finished message
+	dir:	string;
 
 	new:	fn(rev: int): (ref Tgz, string);
 	read:	fn(t: self ref Tgz, n: int, off: big): (array of byte, string);
@@ -996,7 +997,8 @@ Tgz.new(rev: int): (ref Tgz, string)
 	* =>		fail(sprint("bogus first message from deflate"));
 	}
 
-	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, array[0] of byte, 0);
+	dir := sprint("%s-%d/", reponame, rev);
+	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, array[0] of byte, 0, dir);
 	return (t, nil);
 }
 
@@ -1031,7 +1033,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 					if(t.mf == nil)
 						last = 2*512;
 
-					hdr := tarhdr(f.path, big len data, 0);
+					hdr := tarhdr(t.dir+f.path, big len data, 0);
 					pad := len data % 512;
 					if(pad != 0)
 						pad = 512-pad;

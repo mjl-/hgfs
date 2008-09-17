@@ -78,33 +78,6 @@ init(nil: ref Draw->Context, args: list of string)
 	}
 }
 
-createdirs(dirs: string): string
-{
-	path := "";
-	for(l := sys->tokenize(dirs, "/").t1; l != nil; l = tl l) {
-		path += "/"+hd l;
-		say("createdirs, "+path[1:]);
-		sys->create(path[1:], Sys->OREAD, 8r777|Sys->DMDIR);
-	}
-	return nil;
-}
-
-createfile(path: string): (ref Sys->FD, string)
-{
-	(dir, nil) := str->splitstrr(path, "/");
-	if(dir != nil) {
-		err := createdirs(dir);
-		if(err != nil)
-			return (nil, err);
-	}
-
-	say("create, "+path);
-	fd := sys->create(path, Sys->OWRITE, 8r666);
-	if(fd == nil)
-		return (nil, sprint("create %q: %r", path));
-	return (fd, nil);
-}
-
 say(s: string)
 {
 	if(dflag)

@@ -33,7 +33,15 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
   keep track of gen of higher directory, for quick walk to ..
 - hg/fs: add another tree that lists .i(/.d) files.  reading them gives
   back revision numbers
+- hg/fs: add directories in .tgz's?  now only the files added.
+- hg/fs: set mtime for files in .tgz?  might want to use Revtree
+  etc. for creating .tgz's.
 
 - library: have to detect when .i-only is changed into using .d;  have
   to invalidate/fix cache
 - library: understand more revlog revision & flags in .i?
+- library: merge patches from different revisions before applying.
+- library: apply patches more efficiently.
+
+- think about implementing the low-latency update protocol, server side.
+- think about other tools such as pull & clone.
