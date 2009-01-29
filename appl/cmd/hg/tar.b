@@ -109,18 +109,18 @@ tarhdr(path: string, size: big, mtime: int): array of byte
 {
 	d := array[512] of {* => byte 0};
 	d[TARPATH:] = array of byte path;
-	d[TARMODE:] = array of byte string sprint("%8o", 8r644);
-	d[TARUID:] = array of byte string sprint("%8o", 0);
-	d[TARGID:] = array of byte string sprint("%8o", 0);
-	d[TARSIZE:] = array of byte sprint("%12bo", size);
-	d[TARMTIME:] = array of byte sprint("%12o", mtime);
+	d[TARMODE:] = sys->aprint("%8o", 8r644);
+	d[TARUID:] = sys->aprint("%8o", 0);
+	d[TARGID:] = sys->aprint("%8o", 0);
+	d[TARSIZE:] = sys->aprint("%12bo", size);
+	d[TARMTIME:] = sys->aprint("%12o", mtime);
 	d[TARLINK] = byte '0'; # '0' is normal file;  '5' is directory
 
 	d[TARCHECKSUM:] = array[8] of {* => byte ' '};
 	sum := 0;
 	for(i := 0; i < len d; i++)
 		sum += int d[i];
-	d[TARCHECKSUM:] = array of byte sprint("%6o", sum);
+	d[TARCHECKSUM:] = sys->aprint("%6o", sum);
 	d[TARCHECKSUM+6:] = array[] of {byte 0, byte ' '};
 	return d;
 }
