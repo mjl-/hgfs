@@ -8,7 +8,7 @@ TARG=\
 	fs.dis\
 	dirstate.dis\
 	status.dis\
-	#readindex.dis\
+	readrevlog.dis\
 
 SYSMODULES=\
 	mercurial.m\
