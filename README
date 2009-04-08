@@ -42,7 +42,7 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - library: understand more revlog revision & flags in .i?
 - library: merge patches from different revisions before applying.
 - library: apply patches more efficiently.
-- library: understand tags, branches?
+- library: understand branches?
 
 - think about implementing the low-latency update protocol, server side.
 - think about other tools such as pull & clone.

@@ -39,6 +39,19 @@ init()
 	nullnode = ref Nodeid(array[20] of {* => byte 0});
 }
 
+Nodeid.parse(s: string): (ref Nodeid, string)
+{
+	{
+		d := unhex(s);
+		if(len d != 20)
+			return (nil, sprint("bad nodeid: %s", s));
+		return (ref Nodeid (d), nil);
+	} exception ex {
+	"unhex:*" =>
+		return (nil, ex[len "unhex:":]);
+	}
+}
+
 Nodeid.create(d: array of byte, n1, n2: ref Nodeid): ref Nodeid
 {
 	say(sprint("nodeid.create, len d %d, n1 %s n2 %s", len d, n1.text(), n2.text()));
@@ -851,6 +864,42 @@ Repo.workroot(r: self ref Repo): string
 	return r.path[:len r.path-len "/.hg"];
 }
 
+Repo.tags(r: self ref Repo): (list of ref Tag, string)
+{
+	path := r.workroot()+"/"+".hgtags";
+	b := bufio->open(path, Bufio->OREAD);
+	if(b == nil)
+		return (nil, nil); # absent file is valid
+
+	clpath := r.storedir()+"/00changelog";
+	(cl, clerr) := Revlog.open(clpath);
+	if(clerr != nil)
+		return (nil, "opening changelog, for revisions: "+clerr);
+
+	l: list of ref Tag;
+	for(;;) {
+		s := b.gets('\n');
+		if(s == nil)
+			break;
+		if(s[len s-1] != '\n')
+			return (nil, sprint("missing newline in .hgtags: %s", s));
+		s = s[:len s-1];
+		toks := sys->tokenize(s, " ").t1;
+		if(len toks != 2)
+			return (nil, sprint("wrong number of tokes in .hgtags: %s", s));
+		
+		name := hd tl toks;
+		e: ref Entry;
+		(n, err) := Nodeid.parse(hd toks);
+		if(err == nil)
+			(e, err) = cl.findnodeid(n);
+		if(err != nil)
+			return (nil, err);
+		l = ref Tag (name, n, e.rev)::l;
+	}
+	return (lists->reverse(l), nil);
+}
+
 find(a: array of string, e: string): int
 {
 	for(i := 0; i < len a; i++)
@@ -1071,13 +1120,13 @@ writefile(path: string, d: array of byte)
 unhex(s: string): array of byte
 {
 	if(len s % 2 != 0)
-		raise "bogus hex string";
+		raise "unhex:bogus hex string";
 
 	d := array[len s/2] of byte;
 	for(i := 0; i < len d; i++) {
 		(num, rem) := str->toint(s[i*2:(i+1)*2], 16);
 		if(rem != nil)
-			raise "bad hex string";
+			raise "unhex:bad hex string";
 		d[i] = byte num;
 	}
 	return d;

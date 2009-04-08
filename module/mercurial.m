@@ -8,6 +8,7 @@ Mercurial: module {
 	Nodeid: adt {
 		d:	array of byte;
 
+		parse:	fn(s: string): (ref Nodeid, string);
 		create:	fn(d: array of byte, n1, n2: ref Nodeid): ref Nodeid;
 		text:	fn(n: self ref Nodeid): string;
 		cmp:	fn(n1, n2: ref Nodeid): int;
@@ -99,6 +100,12 @@ Mercurial: module {
 
 	workdirstate:	fn(path: string): (ref Dirstate, string);
 
+	Tag: adt {
+		name:	string;
+		n:	ref Nodeid;
+		rev:	int;
+	};
+
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
@@ -122,5 +129,6 @@ Mercurial: module {
 		filemtime:	fn(r: self ref Repo, path: string, n: ref Nodeid): (int, string);
 		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
 		workroot:	fn(r: self ref Repo): string;
+		tags:		fn(r: self ref Repo): (list of ref Tag, string);
 	};
 };
