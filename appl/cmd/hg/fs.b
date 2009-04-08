@@ -33,7 +33,7 @@ include "mercurial.m";
 
 dflag: int;
 
-Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtags, Qtgz, Qstate, Qrepofile, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
+Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtags, Qbranches, Qtgz, Qstate, Qrepofile, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
 tab := array[] of {
 	(Qroot,		"<reponame>",	Sys->DMDIR|8r555),
 	(Qlastrev,	"lastrev",	8r444),
@@ -41,6 +41,7 @@ tab := array[] of {
 	(Qlog,		"log",		Sys->DMDIR|8r555),
 	(Qmanifest,	"manifest",	Sys->DMDIR|8r555),
 	(Qtags,		"tags",		8r444),
+	(Qbranches,	"branches",	8r444),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
 	(Qstate,	"state",	8r444),
 	(Qrepofile,	"<repofile>",	Sys->DMDIR|8r555),
@@ -193,6 +194,15 @@ dostyx(gm: ref Tmsg)
 
 		Qtags =>
 			(tags, err) := repo.tags();
+			if(err != nil)
+				return replyerror(m, err);
+			s := "";
+			for(l := tags; l != nil; l = tl l)
+				s += sprint("%s %s %d\n", (hd l).n.text(), (hd l).name, (hd l).rev);
+			srv.reply(styxservers->readstr(m, s));
+
+		Qbranches =>
+			(tags, err) := repo.branches();
 			if(err != nil)
 				return replyerror(m, err);
 			s := "";

@@ -35,15 +35,18 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
   back revision numbers
 - hg/fs: add directories in .tgz's?  now only the files added.
 - hg/fs: use Revtree etc. for creating .tgz's?
-- hg/fs: show not only last revision in files/* etc, but tags too?
+- hg/fs: show not only last revision in files/* etc, but tags&branches too?
+- hg/fs: make a plan to properly show tags&branches
+- hg/fs: make plan to deal with revisions-by-nodeid.  just revision
+  number is not good enough.
 
 - library: have to detect when .i-only is changed into using .d;  have
   to invalidate/fix cache
 - library: understand more revlog revision & flags in .i?
 - library: merge patches from different revisions before applying.
 - library: apply patches more efficiently.
-- library: understand branches?
 
+- use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
 - think about implementing the low-latency update protocol, server side.
 - think about other tools such as pull & clone.
 - could implement a httpfs that serves a http url with plain http.

@@ -106,6 +106,12 @@ Mercurial: module {
 		rev:	int;
 	};
 
+	Branch: adt {
+		name:	string;
+		n:	ref Nodeid;
+		rev:	int;
+	};
+
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
@@ -130,5 +136,6 @@ Mercurial: module {
 		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
 		workroot:	fn(r: self ref Repo): string;
 		tags:		fn(r: self ref Repo): (list of ref Tag, string);
+		branches:	fn(r: self ref Repo): (list of ref Branch, string);
 	};
 };

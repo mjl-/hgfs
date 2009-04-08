@@ -708,12 +708,17 @@ Repo.openrevlog(r: self ref Repo, path: string): (ref Revlog, string)
 }
 
 
+changelog(r: ref Repo): (ref Revlog, string)
+{
+	clpath := r.storedir()+"/00changelog";
+	return Revlog.open(clpath);
+}
+
 Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 {
 	say("repo.manifest");
 
-	clpath := r.storedir()+"/00changelog";
-	(cl, clerr) := Revlog.open(clpath);
+	(cl, clerr) := changelog(r);
 	if(clerr != nil)
 		return (nil, nil, clerr);
 	(cdata, ce, clderr) := cl.get(rev, nil);
@@ -754,8 +759,7 @@ Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byt
 
 Repo.lastrev(r: self ref Repo): (int, string)
 {
-	clpath := r.storedir()+"/00changelog";
-	(cl, clerr) := Revlog.open(clpath);
+	(cl, clerr) := changelog(r);
 	if(clerr != nil)
 		return (-1, clerr);
 
@@ -776,10 +780,10 @@ Repo.lastrev(r: self ref Repo): (int, string)
 
 Repo.change(r: self ref Repo, rev: int): (ref Change, string)
 {
-	clpath := r.storedir()+"/00changelog";
-	(cl, clerr) := Revlog.open(clpath);
+	(cl, clerr) := changelog(r);
 	if(clerr != nil)
 		return (nil, clerr);
+
 	(cdata, e, clderr) := cl.get(rev, nil);
 	if(clderr != nil)
 		return (nil, clderr);
@@ -871,8 +875,7 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 	if(b == nil)
 		return (nil, nil); # absent file is valid
 
-	clpath := r.storedir()+"/00changelog";
-	(cl, clerr) := Revlog.open(clpath);
+	(cl, clerr) := changelog(r);
 	if(clerr != nil)
 		return (nil, "opening changelog, for revisions: "+clerr);
 
@@ -896,6 +899,53 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 		if(err != nil)
 			return (nil, err);
 		l = ref Tag (name, n, e.rev)::l;
+	}
+	return (lists->reverse(l), nil);
+}
+
+Repo.branches(r: self ref Repo): (list of ref Branch, string)
+{
+	path := r.path+"/branch.cache";
+	b := bufio->open(path, Bufio->OREAD);
+	# b nil is okay, we're sure not to read from it if so below
+
+	(cl, clerr) := changelog(r);
+	if(clerr != nil)
+		return (nil, "opening changelog, for revisions: "+clerr);
+
+	# first line has nodeid+revision of tip
+	if(b != nil)
+		b.gets('\n');
+
+	l: list of ref Branch;
+	for(;;) {
+		if(b == nil)
+			break;
+
+		s := b.gets('\n');
+		if(s == nil)
+			break;
+		if(s[len s-1] != '\n')
+			return (nil, sprint("missing newline in branch.cache: %s", s));
+		s = s[:len s-1];
+		toks := sys->tokenize(s, " ").t1;
+		if(len toks != 2)
+			return (nil, sprint("wrong number of tokes in branch.cache: %s", s));
+		
+		name := hd tl toks;
+		e: ref Entry;
+		(n, err) := Nodeid.parse(hd toks);
+		if(err == nil)
+			(e, err) = cl.findnodeid(n);
+		if(err != nil)
+			return (nil, err);
+		l = ref Branch (name, n, e.rev)::l;
+	}
+	if(l == nil) {
+		(e, err) := findentry(cl, -1, nil);
+		if(err != nil)
+			return (nil, err);
+		l = ref Branch ("default", e.nodeid, e.rev)::l;
 	}
 	return (lists->reverse(l), nil);
 }
