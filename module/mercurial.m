@@ -97,6 +97,8 @@ Mercurial: module {
 		l:	list of ref Dirstatefile;
 	};
 
+	workdirstate:	fn(path: string): (ref Dirstate, string);
+
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
@@ -119,5 +121,6 @@ Mercurial: module {
 		filelength:	fn(r: self ref Repo, path: string, n: ref Nodeid): (big, string);
 		filemtime:	fn(r: self ref Repo, path: string, n: ref Nodeid): (int, string);
 		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
+		workroot:	fn(r: self ref Repo): string;
 	};
 };

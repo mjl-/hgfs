@@ -846,6 +846,11 @@ Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
 	return (ds, nil);
 }
 
+Repo.workroot(r: self ref Repo): string
+{
+	return r.path[:len r.path-len "/.hg"];
+}
+
 find(a: array of string, e: string): int
 {
 	for(i := 0; i < len a; i++)
@@ -1129,6 +1134,48 @@ workdir(): string
 	if(fd == nil)
 		return nil;
 	return sys->fd2path(fd);
+}
+
+workdirstate(path: string): (ref Dirstate, string)
+{
+	ds := ref Dirstate (nil, nil, nil);
+	err := workstatedir0(ds, path, "");
+	if(err == nil)
+		ds.l = lists->reverse(ds.l);
+	return (ds, nil);
+}
+
+workstatedir0(ds: ref Dirstate, base, pre: string): string
+{
+	path := base+"/"+pre;
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return sprint("open %q: %r", path);
+	for(;;) {
+		(n, dirs) := sys->dirread(fd);
+		if(n < 0)
+			return sprint("dirread %q: %r", path);
+		if(n == 0)
+			break;
+		for(i := 0; i < n; i++) {
+			d := dirs[i];
+			if(d.name == ".hg")
+				continue;
+			npre := pre;
+			if(npre != nil)
+				npre += "/";
+			npre += d.name;
+			if((d.mode&Sys->DMDIR) == 0) {
+				dsf := ref Dirstatefile ('n', d.mode&8r777, int d.length, d.mtime, npre, nil);
+				ds.l = dsf::ds.l;
+			} else {
+				err := workstatedir0(ds, base, npre);
+				if(err != nil)
+					return err;
+			}
+		}
+	}
+	return nil;
 }
 
 say(s: string)
