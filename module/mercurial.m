@@ -79,6 +79,24 @@ Mercurial: module {
 		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
 	};
 
+	STnormal, STneedmerge, STremove, STadd, STuntracked: con iota; # Dirstatefile.state
+	SZcheck, SZdirty: con iota;
+	Dirstatefile: adt {
+		state:	int;
+		mode:	int;
+		size:	int;
+		mtime:	int;
+		name:	string;
+		origname:	string;	# only non-nil in case of copy/move
+
+		text:	fn(f: self ref Dirstatefile): string;
+	};
+
+	Dirstate: adt {
+		p1, p2:	ref Nodeid;
+		l:	list of ref Dirstatefile;
+	};
+
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
@@ -100,5 +118,6 @@ Mercurial: module {
 		change:		fn(r: self ref Repo, rev: int): (ref Change, string);
 		filelength:	fn(r: self ref Repo, path: string, n: ref Nodeid): (big, string);
 		filemtime:	fn(r: self ref Repo, path: string, n: ref Nodeid): (int, string);
+		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
 	};
 };

@@ -6,6 +6,7 @@ TARG=\
 	tar.dis\
 	log.dis\
 	fs.dis\
+	dirstate.dis\
 	#readindex.dis\
 
 SYSMODULES=\

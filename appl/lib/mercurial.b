@@ -797,6 +797,83 @@ Repo.filemtime(r: self ref Repo, path: string, n: ref Nodeid): (int, string)
 	return (c.when+c.tzoff, nil);
 }
 
+Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
+{
+	path := r.path+"/dirstate";
+	b := bufio->open(path, Bufio->OREAD);
+	if(b == nil)
+		return (nil, sprint("open %q: %r", path));
+
+	n1 := b.read(p1 := array[20] of byte, len p1);
+	n2 := b.read(p2 := array[20] of byte, len p2);
+	if(n1 != len p1 || n2 != len p2)
+		return (nil, sprint("reading parents: %r"));
+
+	buf := array[1+4+4+4+4] of byte;
+	l: list of ref Dirstatefile;
+	for(;;) {
+		n := b.read(buf, len buf);
+		if(n == 0)
+			break;
+		if(n != len buf)
+			return (nil, sprint("bad dirstate, early eof for path header, want %d, saw %d", len buf, n));
+		dsf := ref Dirstatefile;
+		o := 0;
+		stb := buf[o++];
+		dsf.state = find(statestrs, sprint("%c", int stb));
+		(dsf.mode, o) = g32(buf, o);
+		(dsf.size, o) = g32(buf, o);
+		(dsf.mtime, o) = g32(buf, o);
+		length: int;
+		(length, o) = g32(buf, o);
+		if(length >= 2*1024)
+			return (nil, sprint("implausible path length %d in dirstate", length));
+		n = b.read(namebuf := array[length] of byte, len namebuf);
+		if(n != len namebuf)
+			return (nil, "early eof in dirstate while reading path");
+		dsf.name = string namebuf;
+		for(nul := 0; nul < len namebuf; nul++)
+			if(namebuf[nul] == byte '\0') {
+				dsf.name = string namebuf[:nul];
+				dsf.origname = string namebuf[nul+1:];
+				break;
+			}
+		l = dsf::l;
+	}
+	nd1 := ref Nodeid (p1);
+	nd2 := ref Nodeid (p2);
+	ds := ref Dirstate (nd1, nd2, lists->reverse(l));
+	return (ds, nil);
+}
+
+find(a: array of string, e: string): int
+{
+	for(i := 0; i < len a; i++)
+		if(a[i] == e)
+			return i;
+	return -1;
+}
+
+statestrs := array[] of {
+"n", "m", "r", "a", "?",
+};
+statestr(i: int): string
+{
+	if(i >= 0 && i < len statestrs)
+		return statestrs[i];
+	return "X";
+}
+
+Dirstatefile.text(f: self ref Dirstatefile): string
+{
+	tm := daytime->local(daytime->now());
+	timestr := sprint("%04d-%02d-%02d %2d:%2d:%2d", tm.year+1900, tm.mon+1, tm.mday, tm.hour, tm.min, tm.sec);
+	s := sprint("%s %03uo %10d %s %q", statestr(f.state), 8r777&f.mode, f.size, timestr, f.name);
+	if(f.origname != nil)
+		s += sprint(" (from %q)", f.origname);
+	return s;
+}
+
 
 Hunk: adt {
 	start, end:	int;
