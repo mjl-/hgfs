@@ -417,7 +417,10 @@ again:
 				}
 				revstr := op.name[len name:len op.name-len ".tgz"];
 				err: string;
-				(rev, err) = parserev(revstr);
+				if(revstr == "latest")
+					(rev, err) = repo.lastrev();
+				else
+					(rev, err) = parserev(revstr);
 				if(err != nil) {
 					op.reply <-= (nil, styxservers->Enotfound);
 					continue again;
