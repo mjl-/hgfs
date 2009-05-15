@@ -875,15 +875,13 @@ Revtree.readdir(r: self ref Revtree, gen: int, op: ref Navop.Readdir)
 		f.files = dirfiles(r, gen);
 
 	say(sprint("revtree.readdir, len files %d, op.count %d, op.offset %d", len f.files, op.count, op.offset));
-	have := 0;
-	for(i := 0; have < op.count && op.offset+i < len f.files; i++) {
+	for(i := op.offset; i-op.offset < op.count && i < len f.files; i++) {
 		(d, err) := r.stat(f.files[i]);
 		op.reply <-= (d, err);
 		if(err != nil)
 			return say("revtree.readdir, stopped after error: "+err);
-		have++;
 	}
-	say(sprint("revtree.readdir done, have %d, i %d", have, i));
+	say(sprint("revtree.readdir done, end i %d", i));
 }
 
 Revtree.walk(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string)
