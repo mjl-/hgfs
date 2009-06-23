@@ -10,6 +10,7 @@ fn d { cat $* | filtrate -p z inflate | hg/printchangegroup }
 fn dv { cat $* | filtrate -p z inflate | hg/printchangegroup -v } 
 
 httpd -l /fd/2 -c / {hg/websrv -d} GET .
+httpd -l /fd/2 -c / {hg/websrv -d -a $home/code} GET $home/code/
 
 revs="0 1 10 15 20 25 30 35 36"
 revs=`seq 0 36`

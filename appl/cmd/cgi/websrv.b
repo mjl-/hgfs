@@ -48,11 +48,13 @@ init(nil: ref Draw->Context, args: list of string)
 	hg->init();
 
 	hgpath := "";
+	repodir := "";
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] [-h path] querystring");
+	arg->setusage(arg->progname()+" [-a repodir] [-d] [-h path] querystring");
 	while((c := arg->opt()) != 0)
 		case c {
+		'a' =>	repodir = arg->earg();
 		'd' =>	dflag++;
 			if(dflag > 1)
 				hg->debug++;
@@ -62,6 +64,10 @@ init(nil: ref Draw->Context, args: list of string)
 	args = arg->argv();
 	if(len args > 1)
 		arg->usage();
+	if(hgpath != nil && repodir != nil) {
+		warn("cannot have both -a and -h");
+		arg->usage();
+	}
 	iscgi = args == nil;
 	qs: string;
 	if(args == nil)
@@ -69,7 +75,15 @@ init(nil: ref Draw->Context, args: list of string)
 	else
 		qs = hd args;
 
-
+	if(repodir != nil) {
+		pathinfo := env->getenv("PATH_INFO");
+		if(pathinfo == nil)
+			fail("PATH_INFO not set, cannot determine repo name");
+		elems := sys->tokenize(pathinfo, "/").t1;
+		if(elems == nil)
+			fail(sprint("bad PATH_INFO %#q, cannot determine repo name", pathinfo));
+		hgpath = repodir+"/"+hd lists->reverse(elems);
+	}
 	err: string;
 	(repo, err) = Repo.find(hgpath);
 	if(err != nil)
