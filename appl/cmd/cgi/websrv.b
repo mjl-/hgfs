@@ -51,7 +51,7 @@ init(nil: ref Draw->Context, args: list of string)
 	repodir := "";
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-a repodir] [-d] [-h path] querystring");
+	arg->setusage(arg->progname()+" [-a repodir] [-d] [-h path] [querystring]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'a' =>	repodir = arg->earg();
@@ -422,7 +422,10 @@ changegroup()
 	roots := nodes(sroots);
 	(cl, ml, centries, mentries) := openhist();
 	desc := array[len centries] of ref Entry;
-	filldesc(centries, desc, roots);
+	if(len roots == 0)
+		desc[:] = centries;
+	else
+		filldesc(centries, desc, roots);
 	mkchangegroup(cl, ml, centries, mentries, desc);
 }
 
@@ -431,6 +434,8 @@ changegroupsubset()
 {
 	sbases := sys->tokenize(fields.get("bases"), " ").t1;
 	sheads := sys->tokenize(fields.get("heads"), " ").t1;
+	if(fields.has("bases") && sbases == nil || fields.has("heads") && sheads == nil)
+		fail("bases/heads must have one valid nodeid when specified");
 
 	bases := nodes(sbases);
 	heads := nodes(sheads);

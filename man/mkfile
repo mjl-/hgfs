@@ -1,9 +1,7 @@
 <../mkconfig
 
 MAN=\
-	4/hgfs
+	4/hgfs\
+	8/hgwebsrv\
 
 <mkman
-
-nuke:QV:
-	

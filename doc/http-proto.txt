@@ -9,129 +9,223 @@ especially "WireProtocol" is relevant.  but also very incomplete.
 
 each http request to the cgi script executes a command.  the command
 is specified in the "cmd" cgi key/value pair.  a command can have
-other key/value pairs for its parameters.  for example, the command
+other key/value pairs as its parameters.  for example, the command
 "branches" accepts the key/value pair "nodes", with a space-separated
-list of values.  dash-separated values are used by other commands.
+list of values.
 
 the output commands use the mime type "application/mercurial-0.1".
-successful commands return the http response status 200.
+successful commands return the http response status 200.  most
+failed commands return status 500, "internal server error".  some
+commands seem to erroneously return status 400 "bad request".
 
-the following lists the commands, their parameters, an example call,
-and a description of the format of the output:
+the commands:
 
-# heads
-no parameters
-?cmd=heads
 
-one line containing nodeid's, space-separated.
+# "heads"
+
+parameters:
+	none
+
+example:
+	?cmd=heads
+
+description:
+	returns the changelog heads in the repository.
+
+output:
+        the response is a single line with a space-separated list
+        of nodeid's.
 
 example output:
-
 	f93f15f25ca4d23da8ff646e472e25c442eef3f4 154bea2a1eafbb0476b65ea951b28bb3caedc83d
 
 
-# branches
-required parameter "nodes", space-separated list of nodes (tips).
-?cmd=branches&nodes=$nodeid1+$nodeid2+...
+# "branches"
 
-"branches" returns the base nodeid and its p1 and p2 for each
-requested tip.  the base is the first node in the history that has
-two parents, starting at the given tip.
+paramers:
+	required parameter "nodes", a space-separated list of nodes (tips).
 
-if the base for the nullnode is requested, just return all of
-tip,base,p1,p2 as null nodes.  if the base of the first revision
-is requested, return the node itself.
+example:
+	?cmd=branches&nodes=532955670b2e830186bcdd2d78f0f0cee4f5299e+d48dcfd81ac8cd75691dae606a93a285eaa25b24
 
-one or more lines (newline-delimited), each with four fields,
-all nodeid's:  tip, base, p1, p2.
+description:
+        returns the base nodeid and its p1 and p2 for each requested
+        tip.  the base is the first node in the history that has
+        two parents, starting at the given tip.
+
+        if the base for the nullnode is requested, just return all
+        of tip,base,p1,p2 as null nodes.  if the base of the first
+        revision is requested, return the node itself.
+
+output:
+        one or more lines (ending with a newline), each with four
+        fields, all nodeid's:  tip, base, p1, p2.
 
 example output:
 
 	f93f15f25ca4d23da8ff646e472e25c442eef3f4 bbce75fd77ff1e553e3280c030cab480b16f8f8a 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000
 
 
-# between
-required parameter "pairs", space-separated list of dash-separated nodeid-pairs (tip, base),
-?cmd=between&pairs=$nodeid1-$nodeid2+$nodeid1-$nodeid2
+# "between"
 
-a client has "base" but not "tip" and wants to find out where his
-knowledge ends.  "between" returns elements 1, 2, 4, 8, etc from
-tip to base (so starting at tip, moving towards base).
+parameters:
+        required parameter "pairs", a space-separated list of
+        dash-separated nodeid-pairs (tip, base),
 
-if the node is the first node, an empty line is returned.  the same
-if the node is the nullnode.  the tip & base are themselves never
-returned in the result (the client already knows about them).
+example:
+	?cmd=between&pairs=6f28f675552a773350f618c566c138d7fed654df-2603edb6c445e0d20765aa2cd5dd37784115d4f8+279ab04162aaa7dfe5b3c403f2a477c9af8be75b-8e9584c42ba4f0868cdc68fe4fc32186a2772a31
 
-the output is a list of space-separated nodeid's.
+description:
+	a client has "base" but not "tip" and wants to find out where his
+	knowledge ends.  "between" returns elements 1, 2, 4, 8, etc from
+	tip to base (so starting at tip, moving towards base).
+
+        the base and/or tip node can be the null node, or the first
+        node in the history.  in that case there is simply no node
+        to return and thus the returned line is empty.  similarly
+        if the requested "tip" comes before the requested base.
+
+        the tip & base are themselves never returned in the result
+        (the client already knows about them).
+
+output:
+	the output is a list of space-separated nodeid's.
 
 example output:
 
 	558a967259406f86ac2dedc6e389b204fdd5733e f3fd9fc7205a5303fd28721cc125dfba378f57cf
 
 
-# changegroup
-options parameter "roots", space-separted list of nodes.  if absent, return all changes in history.
-?cmd=changegroup&roots=$nodeid1+$nodeid2+...
+# "changegroup"
 
-returns the changes starting at the roots, down to the tips, in a
-single changegroup.
+paramters:
+	optional parameter "roots", space-separted list of nodes.
+
+example:
+	?cmd=changegroup&roots=d48dcfd81ac8cd75691dae606a93a285eaa25b24+532955670b2e830186bcdd2d78f0f0cee4f5299e
+
+description:
+        return a changegroup with all changes for the given roots
+        and their descendants in them.  the changegroup consists
+        of three parts:  changes to the changelog, manifest and the
+        files.
+
+	if the paramater "roots" is absent, all changes are returned.
+
+output:
+        the format of a changegruop is described in the "WireProtocol"
+        wiki page, but some details aren't clear.
+
+        first, the 4-byte sizes at the front of chunks and filenames
+        includes the 4-bytes size field.  so if the size field for
+        a filename has the value 9, that means the filename is 9-4=5
+        bytes long.
+
+        second, not too surprising, the end of the list of files
+        is announced by a size field with the value zero (0).
+
+        a nullnode just identifies the start of the repository, so
+        will fetch the entire history.  it is also not a problem
+        to ask for overlapping changes (e.g. by including the same
+        nodeid twice in the "roots" parameter).  for serving the
+        request, the changes to return are typically first marked,
+        and finally packed up in a changegroup.  while marking, it
+        doesn't matter if a change is marked twice.  it is not
+        packed twice.
+
+	the output is compressed with deflate, with zlib header/footer.
+
+output examples:
+	none, but use hg/printchangegroup to print one.
 
 
-# capabilities
+# "capabilities"
 
-no parameters
-?cmd=capabilities
+parameters:
+	none
 
-space-separated list of values (no newline!) containing additional
-commands supported.  some commands define options they support.
+example:
+	?cmd=capabilities
+
+description:
+        returns optional/new capabilities the server supports.
+        "lookup", "changesubgroup" and "unbundle" are some of them
+        (there don't seem to be many more).
+
+
+output:
+        space-separated list of values (no newline!) containing the
+        additional commands supported.  some commands define options
+        they support by following the command with an "=" and a value.
 
 example response:
 
 	lookup changegroupsubset unbundle=HG10GZ,HG10BZ,HG10UN
 
 
-# lookup
-required parameter "key", revision number (integer).
-?cmd=lookup&key=2
+# "lookup"
 
-this command can be listed in the response to capabilities.
+paramters:
+	required parameter "key", a revision.
 
-the nodeid for the given revision is returned in a single line with
-a "1", space and the nodeid in ascii.  on error, the response is
-"0", space and the error message in ascii.
+examples:
+	?cmd=lookup&key=2
+	?cmd=lookup&key=tip
 
-the revision can be any string that hg normally accepts, e.g. tags,
-a nodeid, a revision number, ".", "null", "tip".
+description:
+        lookup the nodeid for the requested revision.  the revision
+        can be any string that hg normally accepts, e.g. tags, a
+        nodeid, a revision number, ".", "null", "tip".
 
-example response:
+	this command can be listed in the response to capabilities.
+
+output:
+        the nodeid for the given revision is returned in a single
+        line with a "1", space and the nodeid in ascii.  on error,
+        the response is "0", space and the error message in ascii.
+
+example responses:
 	1 0a13b7d6034033c2c1becd6b9691aed82188bba3
-
-example response:
 	0 unknown revision '2'
 
 
-# changegroupsubset
-optional parameter "bases", space-separated list of nodeid's.
-optional parameter "heads", space-separated list of nodeid's.
-?cmd=changegroupsubset&bases=0000000000000000000000000000000000000000&heads=0a13b7d6034033c2c1becd6b9691aed82188bba3
+# "changegroupsubset"
 
-seems to be required for "hg clone -r <rev> url"
-this command can be listed in the response to capabilities.
+paramters:
+	optional parameter "bases", space-separated list of nodeid's.
+	optional parameter "heads", space-separated list of nodeid's.
 
-it returns a changegroup just like command "changegroup", but instead
-of consisting of all nodes that are descendant of the given roots,
-it returns only the nodes that are descendant of one of the bases
-and ancestor of one of the heads.
+example:
+	?cmd=changegroupsubset&bases=0000000000000000000000000000000000000000&heads=0a13b7d6034033c2c1becd6b9691aed82188bba3
 
-a nullnode base or head is valid, just won't select anything.
-otherwise nodes specified must exist.
+description:
+        changegroupsubset is very much like changegroup.  returns
+        a changegroup just like command "changegroup", but instead
+        of consisting of all nodes that are descendant of the given
+        roots, it returns only the nodes that are descendant of one
+        of the bases and ancestor of one of the heads.
+
+	a nullnode base or head is valid, just won't select anything.
+        the parameters base and head may each or both be absent.
+        when they are present, they must contain at least one valid
+        nodeid.
+	otherwise nodes specified must exist.
+
+	this command can be listed in the response to capabilities.
+	this command seems to be required for "hg clone -r <rev> url"
+
+output:
+	see command "changegroup"
+
+output example:
+	see command "changegroup"
 
 
-# unbundle
+# "unbundle"
 xxx
 (seems to be used for pushing changes to server)
 
 
-# stream_out
+# "stream_out"
 xxx
 (seems to be for use on fast LAN's)

@@ -41,7 +41,6 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 - all: make faster
 
-- cgi/websrv: document the protocol better
 - cgi/websrv: calculate binary patches, instead of just sending a
   fake patch overpatching the whole file with new data
 - cgi/websrv: test with various client versions

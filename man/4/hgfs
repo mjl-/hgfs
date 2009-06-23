@@ -121,3 +121,5 @@ is the latest revision (again, any revision can be read, it is just not listed).
 .br
 .B /appl/lib/mercurial.b
 .br
+.SH SEE ALSO
+.IR hgwebsrv (8)
