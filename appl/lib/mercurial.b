@@ -522,47 +522,48 @@ Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, r
 	return (data, e, err);
 }
 
-Revlog.delta(rl: self ref Revlog, rev: int): (array of byte, string)
+
+# create delta from prev to rev.  prev may be -1.
+# if we are lucky, rev's base is prev, and we can just use the patch in the revlog.
+# otherwise we'll have to create a patch.  for prev -1 this simply means making
+# a patch with the entire file contents.
+# for prev >= 0, we should generate a patch.  instead, for now we'll patch over the entire file.
+# xxx
+Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
 {
 	(bufs, e, err) := get(rl, rev, nil);
 	if(err != nil)
 		return (nil, err);
 
 	delta := hd lists->reverse(bufs);
-
-	# if base is not p1, retrieve full version (we'll turn it into a delta below)
-	if(e.base != e.p1) {
-		(delta, nil, err) = rl.get(rev, nil);
-		if(err != nil)
-			return (nil, sprint("retrieving rev %d for making delta: %s", rev, err));
-		say("delta, base != p1");
-	}
-	if(e.rev == e.base || e.base != e.p1) {
-		say("delta, e.rev == e.base || e.base != e.p1");
-		# full version or base not parent.  make/fake it a delta.
-		# this should probably be done by really calculating a delta...
-		prevlen := 0;
-		if(e.p1 >= 0 && e.base != e.p1) {
-			pe: ref Entry;
-			(pe, err) = rl.findrev(e.p1);
-			if(err != nil)
-				return (nil, err);
-			prevlen = pe.uncsize;
-			say(sprint("prevlen now %d", prevlen));
-		}
-		say(sprint("made delta, start %d, end %d, size %d", 0, prevlen, len delta));
-		ndelta := array[3*4+len delta] of byte;
-		o := 0;
-		o += p32(ndelta, o, 0); # start
-		o += p32(ndelta, o, prevlen); # end
-		o += p32(ndelta, o, len delta); # size
-		ndelta[o:] = delta;
-		delta = ndelta;
-
+	if(prev == e.base && e.base != e.rev) {
+		say(sprint("matching delta, e %s", e.text()));
+		return (delta, nil);
 	}
 
-	say(sprint("delta, len %d", len delta));
-	return (delta, err);
+	obuflen := 0;
+	nbuf: array of byte;
+	if(e.rev == e.base)
+		nbuf = delta;
+	else
+		(nbuf, nil, err) = rl.get(rev, nil);
+
+	if(err == nil && prev >= 0) {
+		pe: ref Entry;
+		(pe, err) = rl.findrev(prev);
+		if(err == nil)
+			obuflen = pe.uncsize;
+	}
+	if(err != nil)
+		return (nil, err);
+	say(sprint("delta with full contents, start %d end %d size %d, e %s", 0, obuflen, len nbuf, e.text()));
+	delta = array[3*4+len nbuf] of byte;
+	o := 0;
+	o += p32(delta, o, 0); # start
+	o += p32(delta, o, obuflen); # end
+	o += p32(delta, o, len nbuf); # size
+	delta[o:] = nbuf;
+	return (delta, nil);
 }
 
 Revlog.filelength(rl: self ref Revlog, nodeid: ref Nodeid): (big, string)
@@ -1125,9 +1126,9 @@ Patch.parse(d: array of byte): (ref Patch, string)
 		(length, o) = g32(d, o);
 		say(sprint("s %d e %d l %d", start, end, length));
 		if(start > end)
-			return (nil, "bad data, start > end");
+			return (nil, sprint("bad data, start %d > end %d", start, end));
 		if(o+length > len d)
-			return (nil, "bad data, hunk points past buffer");
+			return (nil, sprint("bad data, hunk points past buffer, o+length %d+%d > len d %d", o, length, len d));
 		buf := array[length] of byte;
 		buf[:] = d[o:o+length];
 		l = ref Hunk(start, end, buf)::l;

@@ -79,7 +79,7 @@ init(nil: ref Draw->Context, args: list of string)
 		fail("open revlog: "+err);
 
 	buf: array of byte;
-	(buf, err) = rl.delta(rev);
+	(buf, err) = rl.delta(-1, rev); # xxx make parent specifyable too?  default to base?
 	if(err != nil)
 		fail("delta: "+err);
 

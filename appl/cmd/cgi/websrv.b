@@ -464,6 +464,7 @@ mkchangegroup(cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry)
 		fail("init deflate: "+err);
 
 	# print the changelog group chunks
+	prev := -1;
 	for(i = 0; i < len sel; i++) {
 		e := sel[i];
 		if(e == nil)
@@ -473,9 +474,12 @@ mkchangegroup(cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry)
 
 		hdr := array[4+4*20] of byte;
 		delta: array of byte;
-		(delta, err) = cl.delta(e.rev);
+		if(prev == -1)
+			prev = e.p1;
+		(delta, err) = cl.delta(prev, e.rev);
 		if(err != nil)
 			fail(sprint("reading delta for changelog rev %d: %s", e.rev, err));
+		prev = e.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
 		hdr[o:] = e.nodeid.d;
@@ -495,6 +499,7 @@ mkchangegroup(cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry)
 	# do another pass, now for the manifests of the changegsets
 	# gather the paths+their nodeids we might need to send info about, for the next pass
 	paths: list of ref Path;
+	prev = -1;
 	for(i = 0; i < len sel; i++) {
 		ce := sel[i];
 		if(ce == nil)
@@ -513,9 +518,12 @@ mkchangegroup(cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry)
 
 		hdr := array[4+4*20] of byte;
 		delta: array of byte;
-		(delta, err) = ml.delta(me.rev);
+		if(prev == -1)
+			prev = me.p1;
+		(delta, err) = ml.delta(prev, me.rev);
 		if(err != nil)
 			fail(sprint("reading delta for manifest rev %d: %s", me.rev, err));
+		prev = me.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
 		hdr[o:] = me.nodeid.d;
@@ -557,6 +565,7 @@ filegroup(out: ref Sys->FD, p: ref Path, centries, sel: array of ref Entry)
 	wrote := 0;
 
 	say(sprint("path %s", p.path));
+	prev := -1;
 	for(l := p.nodeids; l != nil; l = tl l) {
 		n := hd l;
 		i := findnodeid(fentries, n);
@@ -580,9 +589,12 @@ filegroup(out: ref Sys->FD, p: ref Path, centries, sel: array of ref Entry)
 
 		hdr := array[4+4*20] of byte;
 		delta: array of byte;
-		(delta, err) = rl.delta(e.rev);
+		if(prev == -1)
+			prev = e.p1;
+		(delta, err) = rl.delta(prev, e.rev);
 		if(err != nil)
 			fail(sprint("reading delta for rev %d, path %q: %s", e.rev, p.path, err));
+		prev = e.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
 		hdr[o:] = e.nodeid.d;

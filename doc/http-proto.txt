@@ -114,7 +114,7 @@ description:
 
 output:
         the format of a changegruop is described in the "WireProtocol"
-        wiki page, but some details aren't clear.
+        wiki page, but some details aren't clear or correct.
 
         first, the 4-byte sizes at the front of chunks and filenames
         includes the 4-bytes size field.  so if the size field for
@@ -123,6 +123,11 @@ output:
 
         second, not too surprising, the end of the list of files
         is announced by a size field with the value zero (0).
+
+        third, more important, the delta's aren't necessarily against
+        p1 as stated.  instead, the first in a group is a delta
+        against p1, the following delta's are against the preceding
+        revision.  this is often p1, but it does not have to be.
 
         a nullnode just identifies the start of the repository, so
         will fetch the entire history.  it is also not a problem

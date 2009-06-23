@@ -81,7 +81,7 @@ Mercurial: module {
 		findrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, string);
 		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
 		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
-		delta:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
+		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
 	};
 
 	STnormal, STneedmerge, STremove, STadd, STuntracked: con iota; # Dirstatefile.state
