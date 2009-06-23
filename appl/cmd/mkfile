@@ -2,8 +2,7 @@
 
 DIRS=\
 	hg\
-
-#TARG=
+#	cgi\
 
 SYSMODULES=\
 	arg.m\
@@ -14,7 +13,4 @@ SYSMODULES=\
 	string.m\
 	sys.m\
 
-#DISBIN=$ROOT/dis
-
-#<$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs

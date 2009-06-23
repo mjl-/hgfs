@@ -72,7 +72,7 @@ init(nil: ref Draw->Context, args: list of string)
 			first = 0;
 		else
 			sys->print("\n");
-			
+
 		sys->print("## revision %d\n", r);
 		sys->print("%s\n", change.text());
 	}

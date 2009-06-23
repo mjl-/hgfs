@@ -1,4 +1,4 @@
-.TH hgfs 1
+.TH hgfs 4
 .SH NAME
 hg/fs \- mount mercurial repository
 .SH synopsis

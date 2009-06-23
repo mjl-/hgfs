@@ -1,0 +1,96 @@
+# tests for hg/websrv
+
+these examples are against hgfs, rev 36 as latest.
+
+fn h { hg/websrv $* }
+fn m { hget -v 'http://localhost:8000/?'^$"* }
+fn t { echo websrv:; h $*; echo mercurial:; m $* }
+
+fn d { cat $* | filtrate -p z inflate | hg/printchangegroup }
+fn dv { cat $* | filtrate -p z inflate | hg/printchangegroup -v } 
+
+httpd -l /fd/2 -c / {hg/websrv -d} GET .
+
+revs="0 1 10 15 20 25 30 35 36"
+revs=`seq 0 36`
+(for i in $revs; do echo revision $i; cd test && hg pull -r$i && hg update && cd ../good/ && hg pull -r$i && hg update && cd .. || exit; echo done; echo; diff -ru good test; echo; read; done)
+
+for i in $revs; do hg clone -r$i http://localhost/test/ test$i; done
+for i in $revs; do hg clone -r$i http://localhost:8000/ good$i; done
+
+for i in $revs; do echo revision $i; diff -ru good$i test$i; read; done
+for i in $revs; do (cd test$i && hg verify); done
+
+
+
+t 'cmd=bogus'  # bad
+
+t 'cmd=lookup&key=0'
+t 'cmd=lookup&key=1'
+t 'cmd=lookup&key=tip'
+# bad
+t 'cmd=lookup&key='
+t 'cmd=lookup&key=bad'
+t 'cmd=lookup&key=999999999'
+t 'cmd=lookup'
+
+t 'cmd=heads'
+
+t 'cmd=capabilities'
+
+t 'cmd=branches&nodes=d48dcfd81ac8cd75691dae606a93a285eaa25b24'
+t 'cmd=branches&nodes=532955670b2e830186bcdd2d78f0f0cee4f5299e'
+t 'cmd=branches&nodes=0000000000000000000000000000000000000000'
+t 'cmd=branches&nodes=532955670b2e830186bcdd2d78f0f0cee4f5299e+d48dcfd81ac8cd75691dae606a93a285eaa25b24+0000000000000000000000000000000000000000'
+# bad
+t 'cmd=branches&nodes='
+t 'cmd=branches&nodes=bad0'
+t 'cmd=branches'
+t 'cmd=branches&nodes=0000000000000000000000000000000000000001'
+
+t 'cmd=between&pairs=d48dcfd81ac8cd75691dae606a93a285eaa25b24-532955670b2e830186bcdd2d78f0f0cee4f5299e'
+t 'cmd=between&pairs=d48dcfd81ac8cd75691dae606a93a285eaa25b24-0000000000000000000000000000000000000000'
+t 'cmd=between&pairs=0000000000000000000000000000000000000000-0000000000000000000000000000000000000000'
+t 'cmd=between&pairs=0000000000000000000000000000000000000000-0000000000000000000000000000000000000000+6f28f675552a773350f618c566c138d7fed654df-2603edb6c445e0d20765aa2cd5dd37784115d4f8'
+t 'cmd=between&pairs=532955670b2e830186bcdd2d78f0f0cee4f5299e-0000000000000000000000000000000000000000'
+t 'cmd=between&pairs=6f28f675552a773350f618c566c138d7fed654df-2603edb6c445e0d20765aa2cd5dd37784115d4f8'
+t 'cmd=between&pairs=6f28f675552a773350f618c566c138d7fed654df-2603edb6c445e0d20765aa2cd5dd37784115d4f8+279ab04162aaa7dfe5b3c403f2a477c9af8be75b-8e9584c42ba4f0868cdc68fe4fc32186a2772a31'
+t 'cmd=between&pairs=532955670b2e830186bcdd2d78f0f0cee4f5299e-532955670b2e830186bcdd2d78f0f0cee4f5299e'
+# bad
+t 'cmd=between'
+t 'cmd=between&pairs='
+t 'cmd=between&pairs=bad'
+t 'cmd=between&pairs=bad0'
+t 'cmd=between&pairs=bad0-bad0'
+t 'cmd=between&pairs=bad0-bad0+bad0-bad0'
+t 'cmd=between&pairs=0000000000000000000000000000000000000001-0000000000000000000000000000000000000002'
+
+t 'cmd=changegroup'
+t 'cmd=changegroup&roots=d48dcfd81ac8cd75691dae606a93a285eaa25b24'
+t 'cmd=changegroup&roots=532955670b2e830186bcdd2d78f0f0cee4f5299e'  # first
+t 'cmd=changegroup&roots=0000000000000000000000000000000000000000'
+# bad
+t 'cmd=changegroup&roots='
+t 'cmd=changegroup&roots=bad0'
+t 'cmd=changegroup&roots=bad+bad0'
+
+t 'cmd=changegroup&roots=a3e845a476bdb609811bc6b231527ed33a6c2a69'
+t 'cmd=changegroup&roots=d48dcfd81ac8cd75691dae606a93a285eaa25b24'
+t 'cmd=changegroup&roots=d48dcfd81ac8cd75691dae606a93a285eaa25b24+d48dcfd81ac8cd75691dae606a93a285eaa25b24'
+
+t 'cmd=changegroupsubset&bases=d48dcfd81ac8cd75691dae606a93a285eaa25b24&heads=d48dcfd81ac8cd75691dae606a93a285eaa25b24'  # last
+t 'cmd=changegroupsubset&bases=532955670b2e830186bcdd2d78f0f0cee4f5299e&heads=532955670b2e830186bcdd2d78f0f0cee4f5299e'  # first
+t 'cmd=changegroupsubset&bases=532955670b2e830186bcdd2d78f0f0cee4f5299e&heads=0000000000000000000000000000000000000000'
+t 'cmd=changegroupsubset&bases=0000000000000000000000000000000000000000&heads=0000000000000000000000000000000000000000'
+t 'cmd=changegroupsubset'
+t 'bases=3a3844dc7e7476edd75d83726b52d0d782ba948b&cmd=changegroupsubset&heads=2603edb6c445e0d20765aa2cd5dd37784115d4f8'
+# bad
+t 'cmd=changegroupsubset&bases=&heads=532955670b2e830186bcdd2d78f0f0cee4f5299e'
+t 'cmd=changegroupsubset&bases=532955670b2e830186bcdd2d78f0f0cee4f5299e&heads='
+t 'cmd=changegroupsubset&bases=0000000000000000000000000000000000000001&heads=0000000000000000000000000000000000000001'
+t 'cmd=changegroupsubset&bases=0000000000000000000000000000000000000000&heads=0000000000000000000000000000000000000001'
+t 'cmd=changegroupsubset&bases=0000000000000000000000000000000000000001&heads=0000000000000000000000000000000000000000'
+t 'cmd=changegroupsubset&bases=bad0&heads=bad0'
+t 'cmd=changegroupsubset&bases=bad0+bad0&heads=bad0+bad0'
+t 'cmd=changegroupsubset&heads=bad0+bad0'
+t 'cmd=changegroupsubset&bases=bad0+bad0'

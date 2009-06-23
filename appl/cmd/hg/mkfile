@@ -1,6 +1,5 @@
 <../../../mkconfig
 
-
 TARG=\
 	get.dis\
 	tar.dis\
@@ -9,6 +8,9 @@ TARG=\
 	dirstate.dis\
 	status.dis\
 	readrevlog.dis\
+	printpatch.dis\
+	printchangegroup.dis\
+	delta.dis\
 
 SYSMODULES=\
 	mercurial.m\

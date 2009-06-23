@@ -1073,7 +1073,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 				m.buf[:] = t.data[:give];
 				t.data = t.data[give:];
 				m.reply <-= give;
-				
+
 			Result =>
 				t.tgzdata = array[len m.buf] of byte;
 				t.tgzdata[:] = m.buf;

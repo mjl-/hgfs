@@ -429,7 +429,7 @@ Index.parse(buf: array of byte): (ref Index, string)
 	o += 20;
 	if(len buf-o != 12)
 		return (nil, "wrong number of superfluous bytes");
-	
+
 	return (ix, nil);
 }
 

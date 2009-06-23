@@ -1,3 +1,8 @@
+# status
+
+usable for reading repositories.  the code can use some refinement.
+
+
 # intro
 
 hgfs serves the contents of a mercurial repository over styx.  see the
@@ -12,6 +17,11 @@ repositories (also undocumented).
 first, ensure a "mkconfig" file is present.  a bind/symlink to the
 mkconfig of your inferno install should do.  create the directory
 $ROOT/dis/hg.  now "mk install" to compile and install the files.
+
+if you want to install hg/websrv, the http pull protocol server,
+you'll need need "web":
+
+	http://www.ueber.net/code/r/web
 
 
 # latest version
@@ -29,17 +39,27 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
+- all: make faster
+
+- cgi/websrv: document the protocol better
+- cgi/websrv: calculate binary patches, instead of just sending a
+  fake patch overpatching the whole file with new data
+- cgi/websrv: test with various client versions
+
 - hg/fs: improve bookkeeping for revtree:  don't store full path, and
   keep track of gen of higher directory, for quick walk to ..
 - hg/fs: add another tree that lists .i(/.d) files.  reading them gives
   back revision numbers
-- hg/fs: add directories in .tgz's?  now only the files added.
+- hg/fs: add directories in .tgz's?  now only contains files.
 - hg/fs: use Revtree etc. for creating .tgz's?
 - hg/fs: show not only last revision in files/* etc, but tags&branches too?
 - hg/fs: make a plan to properly show tags&branches
 - hg/fs: make plan to deal with revisions-by-nodeid.  just revision
   number is not good enough.
 
+- library: function to resolve revision string to actual revision
+  (e.g. "tip", numeric, "null", tag, nodeid, etc).  should be used
+  at least by cmd lookup in websrv.
 - library: have to detect when .i-only is changed into using .d;  have
   to invalidate/fix cache
 - library: understand more revlog revision & flags in .i?
@@ -47,7 +67,6 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - library: apply patches more efficiently.
 
 - use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
-- think about implementing the low-latency update protocol, server side.
 - think about other tools such as pull & clone.
 - could implement a httpfs that serves a http url with plain http.
   since readdirs & stats cannot be done, it has to be special.  walks

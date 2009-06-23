@@ -23,7 +23,6 @@ include "mercurial.m";
 
 Entrysize:	con 64;
 Nullnode:	con -1;
-nullnode:	ref Nodeid;
 
 init()
 {
@@ -48,7 +47,7 @@ Nodeid.parse(s: string): (ref Nodeid, string)
 		return (ref Nodeid (d), nil);
 	} exception ex {
 	"unhex:*" =>
-		return (nil, ex[len "unhex:":]);
+		return (nil, "bad nodeid: "+ex[len "unhex:":]);
 	}
 }
 
@@ -87,6 +86,11 @@ Nodeid.cmp(n1, n2: ref Nodeid): int
 		else if(n1.d[i] > n2.d[i])
 			return 1;
 	return 0;
+}
+
+Nodeid.isnull(n: self ref Nodeid): int
+{
+	return Nodeid.cmp(n, nullnode) == 0;
 }
 
 getline(b: ref Iobuf): string
@@ -132,7 +136,7 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 	if(tzoff == nil || str->drop(t, "0-9") != nil || str->drop(t, "0-9-") != nil)
 		return (nil, "invalid timestamp/timezone");
 	c.when = int t;
-	c.tzoff = int tzoff[1:]; 
+	c.tzoff = int tzoff[1:];
 
 	for(;;) {
 		l = getline(b);
@@ -367,15 +371,18 @@ readindex(rl: ref Revlog, start: big, startrev, rev: int, nodeid: ref Nodeid, mo
 
 	indexonly := rl.isindexonly();
 	ebuf := array[Entrysize] of byte;
+Next:
 	for(;;) {
 		n := b.read(ebuf, len ebuf);
 		if(n == 0) {
 			if(findlast)
-				return (nil, entries, nil);
+				break Next;
 			return (nil, nil, sprint("no such rev/nodeid %d/%s", rev, nodeid.text()));
 		}
 		if(n < 0)
 			return (nil, nil, sprint("read: %r"));
+		if(n != len ebuf)
+			return (nil, nil, "short read on index");
 		(e, err) := Entry.parse(ebuf, startrev++);
 		if(err != nil)
 			return (nil, nil, err);
@@ -400,16 +407,16 @@ readindex(rl: ref Revlog, start: big, startrev, rev: int, nodeid: ref Nodeid, mo
 
 			start += big (Entrysize+e.csize);
 		}
-		if(findlast)
+		if(findlast && !keepentries)
 			entries = e::nil;
-		else if(e.rev == e.base)
+		else if(e.rev == e.base && !keepentries)
 			entries = nil;
 
 		if(e.rev >= len rl.nodeidcache)
 			cacheadd(rl, e, indexonly);
 
 		match := e.rev == rev || (nodeid != nil && Nodeid.cmp(nodeid, e.nodeid) == 0);
-		if(!findlast && (keepentries || match))
+		if(keepentries || match)
 			entries = e::entries;
 		if(match)
 			break;
@@ -445,7 +452,8 @@ get(rl: ref Revlog, rev: int, nodeid: ref Nodeid): (list of array of byte, ref E
 
 	if(rl.isindexonly()) {
 		# if looking for rev, perhaps it's in the cache and we can skip anything before our revs base revision
-		if(rev >= 0 && rev < len rl.entrycache) {
+		# xxx cache is broken?
+		if(0 && rev >= 0 && rev < len rl.entrycache) {
 			e := rl.entrycache[rev];
 			ebase := rl.entrycache[e.base];
 			ioff = ebase.ioffset;
@@ -512,6 +520,49 @@ Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, r
 	if(err != nil)
 		data = nil;
 	return (data, e, err);
+}
+
+Revlog.delta(rl: self ref Revlog, rev: int): (array of byte, string)
+{
+	(bufs, e, err) := get(rl, rev, nil);
+	if(err != nil)
+		return (nil, err);
+
+	delta := hd lists->reverse(bufs);
+
+	# if base is not p1, retrieve full version (we'll turn it into a delta below)
+	if(e.base != e.p1) {
+		(delta, nil, err) = rl.get(rev, nil);
+		if(err != nil)
+			return (nil, sprint("retrieving rev %d for making delta: %s", rev, err));
+		say("delta, base != p1");
+	}
+	if(e.rev == e.base || e.base != e.p1) {
+		say("delta, e.rev == e.base || e.base != e.p1");
+		# full version or base not parent.  make/fake it a delta.
+		# this should probably be done by really calculating a delta...
+		prevlen := 0;
+		if(e.p1 >= 0 && e.base != e.p1) {
+			pe: ref Entry;
+			(pe, err) = rl.findrev(e.p1);
+			if(err != nil)
+				return (nil, err);
+			prevlen = pe.uncsize;
+			say(sprint("prevlen now %d", prevlen));
+		}
+		say(sprint("made delta, start %d, end %d, size %d", 0, prevlen, len delta));
+		ndelta := array[3*4+len delta] of byte;
+		o := 0;
+		o += p32(ndelta, o, 0); # start
+		o += p32(ndelta, o, prevlen); # end
+		o += p32(ndelta, o, len delta); # size
+		ndelta[o:] = delta;
+		delta = ndelta;
+
+	}
+
+	say(sprint("delta, len %d", len delta));
+	return (delta, err);
 }
 
 Revlog.filelength(rl: self ref Revlog, nodeid: ref Nodeid): (big, string)
@@ -600,6 +651,14 @@ Revlog.lastrev(rl: self ref Revlog): (int, string)
 	if(err != nil)
 		return (-1, err);
 	return (e.rev, nil);
+}
+
+Revlog.entries(rl: self ref Revlog): (array of ref Entry, string)
+{
+	(nil, l, err) := readindex(rl, big 0, 0, -1, nil, Mkeepentries|Mfindlast);
+	if(err == nil)
+		a := l2a(l);
+	return (a, err);
 }
 
 
@@ -708,17 +767,11 @@ Repo.openrevlog(r: self ref Repo, path: string): (ref Revlog, string)
 }
 
 
-changelog(r: ref Repo): (ref Revlog, string)
-{
-	clpath := r.storedir()+"/00changelog";
-	return Revlog.open(clpath);
-}
-
 Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 {
 	say("repo.manifest");
 
-	(cl, clerr) := changelog(r);
+	(cl, clerr) := r.changelog();
 	if(clerr != nil)
 		return (nil, nil, clerr);
 	(cdata, ce, clderr) := cl.get(rev, nil);
@@ -735,7 +788,7 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 	(mrl, mrlerr) := Revlog.open(mpath);
 	if(mrlerr != nil)
 		return (nil, nil, mrlerr);
-	
+
 	(mdata, mderr) := mrl.getnodeid(c.manifestnodeid);
 	if(mderr != nil)
 		return (nil, nil, mderr);
@@ -759,7 +812,7 @@ Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byt
 
 Repo.lastrev(r: self ref Repo): (int, string)
 {
-	(cl, clerr) := changelog(r);
+	(cl, clerr) := r.changelog();
 	if(clerr != nil)
 		return (-1, clerr);
 
@@ -780,7 +833,7 @@ Repo.lastrev(r: self ref Repo): (int, string)
 
 Repo.change(r: self ref Repo, rev: int): (ref Change, string)
 {
-	(cl, clerr) := changelog(r);
+	(cl, clerr) := r.changelog();
 	if(clerr != nil)
 		return (nil, clerr);
 
@@ -875,7 +928,7 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 	if(b == nil)
 		return (nil, nil); # absent file is valid
 
-	(cl, clerr) := changelog(r);
+	(cl, clerr) := r.changelog();
 	if(clerr != nil)
 		return (nil, "opening changelog, for revisions: "+clerr);
 
@@ -890,7 +943,7 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 		toks := sys->tokenize(s, " ").t1;
 		if(len toks != 2)
 			return (nil, sprint("wrong number of tokes in .hgtags: %s", s));
-		
+
 		name := hd tl toks;
 		e: ref Entry;
 		(n, err) := Nodeid.parse(hd toks);
@@ -909,7 +962,7 @@ Repo.branches(r: self ref Repo): (list of ref Branch, string)
 	b := bufio->open(path, Bufio->OREAD);
 	# b nil is okay, we're sure not to read from it if so below
 
-	(cl, clerr) := changelog(r);
+	(cl, clerr) := r.changelog();
 	if(clerr != nil)
 		return (nil, "opening changelog, for revisions: "+clerr);
 
@@ -931,7 +984,7 @@ Repo.branches(r: self ref Repo): (list of ref Branch, string)
 		toks := sys->tokenize(s, " ").t1;
 		if(len toks != 2)
 			return (nil, sprint("wrong number of tokes in branch.cache: %s", s));
-		
+
 		name := hd tl toks;
 		e: ref Entry;
 		(n, err) := Nodeid.parse(hd toks);
@@ -949,6 +1002,44 @@ Repo.branches(r: self ref Repo): (list of ref Branch, string)
 	}
 	return (lists->reverse(l), nil);
 }
+
+Repo.heads(r: self ref Repo): (array of ref Entry, string)
+{
+	(cl, clerr) := r.changelog();
+	if(clerr != nil)
+		return (nil, clerr);
+
+	(a, err) := cl.entries();
+	if(err != nil)
+		return (nil, err);
+
+	for(i := 0; i < len a; i++) {
+		e := a[i];
+		if(e.p1 >= 0)
+			a[e.p1] = nil;
+		if(e.p2 >= 0)
+			a[e.p2] = nil;
+	}
+
+	hl: list of ref Entry;
+	for(i = 0; i < len a; i++)
+		if(a[i] != nil)
+			hl = a[i]::hl;
+	return (l2a(lists->reverse(hl)), nil);
+}
+
+Repo.changelog(r: self ref Repo): (ref Revlog, string)
+{
+	path := r.storedir()+"/00changelog";
+	return Revlog.open(path);
+}
+
+Repo.manifestlog(r: self ref Repo): (ref Revlog, string)
+{
+	path := r.storedir()+"/00manifest";
+	return Revlog.open(path);
+}
+
 
 find(a: array of string, e: string): int
 {
@@ -978,23 +1069,6 @@ Dirstatefile.text(f: self ref Dirstatefile): string
 	return s;
 }
 
-
-Hunk: adt {
-	start, end:	int;
-	buf: array of byte;
-
-	text:	fn(h: self ref Hunk): string;
-};
-
-Patch: adt {
-	l:	list of ref Hunk;
-
-	parse:	fn(d: array of byte): (ref Patch, string);
-	merge:	fn(hl: list of ref Patch): ref Patch;
-	apply:	fn(h: self ref Patch, d: array of byte): array of byte;
-	sizediff:	fn(h: self ref Patch): int;
-	text:	fn(h: self ref Patch): string;
-};
 
 Hunk.text(h: self ref Hunk): string
 {
@@ -1101,8 +1175,8 @@ Entry.parse(buf: array of byte, index: int): (ref Entry, string)
 		return (nil, "wrong number of superfluous bytes");
 
 	if(e.p1 >= e.rev || e.p2 >= e.rev || e.base > e.rev)
-		return (nil, "bad revision value for parent or base revision");
-	
+		return (nil, sprint("bad revision value for parent or base revision, rev %d, p1 %d, p2 %d, base %d", e.rev, e.p1, e.p2, e.base));
+
 	return (e, nil);
 }
 
@@ -1275,6 +1349,24 @@ workstatedir0(ds: ref Dirstate, base, pre: string): string
 		}
 	}
 	return nil;
+}
+
+p32(d: array of byte, o: int, v: int): int
+{
+	d[o++] = byte (v>>24);
+	d[o++] = byte (v>>16);
+	d[o++] = byte (v>>8);
+	d[o++] = byte (v>>0);
+	return 4;
+}
+
+l2a[T](l: list of T): array of T
+{
+	a := array[len l] of T;
+	i := 0;
+	for(; l != nil; l = tl l)
+		a[i++] = hd l;
+	return a;
 }
 
 say(s: string)

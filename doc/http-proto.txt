@@ -1,0 +1,137 @@
+mercurial's cgi protocol for faster pulling.
+
+some links to the mercurial wiki:
+- http://www.selenic.com/mercurial/wiki/HttpCommandProtocol
+- http://www.selenic.com/mercurial/wiki/WireProtocol
+- http://www.selenic.com/mercurial/wiki/WireProtocolNG
+
+especially "WireProtocol" is relevant.  but also very incomplete.
+
+each http request to the cgi script executes a command.  the command
+is specified in the "cmd" cgi key/value pair.  a command can have
+other key/value pairs for its parameters.  for example, the command
+"branches" accepts the key/value pair "nodes", with a space-separated
+list of values.  dash-separated values are used by other commands.
+
+the output commands use the mime type "application/mercurial-0.1".
+successful commands return the http response status 200.
+
+the following lists the commands, their parameters, an example call,
+and a description of the format of the output:
+
+# heads
+no parameters
+?cmd=heads
+
+one line containing nodeid's, space-separated.
+
+example output:
+
+	f93f15f25ca4d23da8ff646e472e25c442eef3f4 154bea2a1eafbb0476b65ea951b28bb3caedc83d
+
+
+# branches
+required parameter "nodes", space-separated list of nodes (tips).
+?cmd=branches&nodes=$nodeid1+$nodeid2+...
+
+"branches" returns the base nodeid and its p1 and p2 for each
+requested tip.  the base is the first node in the history that has
+two parents, starting at the given tip.
+
+if the base for the nullnode is requested, just return all of
+tip,base,p1,p2 as null nodes.  if the base of the first revision
+is requested, return the node itself.
+
+one or more lines (newline-delimited), each with four fields,
+all nodeid's:  tip, base, p1, p2.
+
+example output:
+
+	f93f15f25ca4d23da8ff646e472e25c442eef3f4 bbce75fd77ff1e553e3280c030cab480b16f8f8a 0000000000000000000000000000000000000000 0000000000000000000000000000000000000000
+
+
+# between
+required parameter "pairs", space-separated list of dash-separated nodeid-pairs (tip, base),
+?cmd=between&pairs=$nodeid1-$nodeid2+$nodeid1-$nodeid2
+
+a client has "base" but not "tip" and wants to find out where his
+knowledge ends.  "between" returns elements 1, 2, 4, 8, etc from
+tip to base (so starting at tip, moving towards base).
+
+if the node is the first node, an empty line is returned.  the same
+if the node is the nullnode.  the tip & base are themselves never
+returned in the result (the client already knows about them).
+
+the output is a list of space-separated nodeid's.
+
+example output:
+
+	558a967259406f86ac2dedc6e389b204fdd5733e f3fd9fc7205a5303fd28721cc125dfba378f57cf
+
+
+# changegroup
+options parameter "roots", space-separted list of nodes.  if absent, return all changes in history.
+?cmd=changegroup&roots=$nodeid1+$nodeid2+...
+
+returns the changes starting at the roots, down to the tips, in a
+single changegroup.
+
+
+# capabilities
+
+no parameters
+?cmd=capabilities
+
+space-separated list of values (no newline!) containing additional
+commands supported.  some commands define options they support.
+
+example response:
+
+	lookup changegroupsubset unbundle=HG10GZ,HG10BZ,HG10UN
+
+
+# lookup
+required parameter "key", revision number (integer).
+?cmd=lookup&key=2
+
+this command can be listed in the response to capabilities.
+
+the nodeid for the given revision is returned in a single line with
+a "1", space and the nodeid in ascii.  on error, the response is
+"0", space and the error message in ascii.
+
+the revision can be any string that hg normally accepts, e.g. tags,
+a nodeid, a revision number, ".", "null", "tip".
+
+example response:
+	1 0a13b7d6034033c2c1becd6b9691aed82188bba3
+
+example response:
+	0 unknown revision '2'
+
+
+# changegroupsubset
+optional parameter "bases", space-separated list of nodeid's.
+optional parameter "heads", space-separated list of nodeid's.
+?cmd=changegroupsubset&bases=0000000000000000000000000000000000000000&heads=0a13b7d6034033c2c1becd6b9691aed82188bba3
+
+seems to be required for "hg clone -r <rev> url"
+this command can be listed in the response to capabilities.
+
+it returns a changegroup just like command "changegroup", but instead
+of consisting of all nodes that are descendant of the given roots,
+it returns only the nodes that are descendant of one of the bases
+and ancestor of one of the heads.
+
+a nullnode base or head is valid, just won't select anything.
+otherwise nodes specified must exist.
+
+
+# unbundle
+xxx
+(seems to be used for pushing changes to server)
+
+
+# stream_out
+xxx
+(seems to be for use on fast LAN's)

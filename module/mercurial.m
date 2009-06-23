@@ -12,7 +12,9 @@ Mercurial: module {
 		create:	fn(d: array of byte, n1, n2: ref Nodeid): ref Nodeid;
 		text:	fn(n: self ref Nodeid): string;
 		cmp:	fn(n1, n2: ref Nodeid): int;
+		isnull:	fn(n: self ref Nodeid): int;
 	};
+	nullnode: ref Nodeid;
 
 	Change: adt {
 		rev:	int;
@@ -78,6 +80,8 @@ Mercurial: module {
 		findnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string);
 		findrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, string);
 		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
+		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
+		delta:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
 	};
 
 	STnormal, STneedmerge, STremove, STadd, STuntracked: con iota; # Dirstatefile.state
@@ -137,5 +141,25 @@ Mercurial: module {
 		workroot:	fn(r: self ref Repo): string;
 		tags:		fn(r: self ref Repo): (list of ref Tag, string);
 		branches:	fn(r: self ref Repo): (list of ref Branch, string);
+		heads:		fn(r: self ref Repo): (array of ref Entry, string);
+		changelog:	fn(r: self ref Repo): (ref Revlog, string);
+		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
+	};
+
+	Hunk: adt {
+		start, end:	int;
+		buf: array of byte;
+
+		text:	fn(h: self ref Hunk): string;
+	};
+
+	Patch: adt {
+		l:	list of ref Hunk;
+
+		parse:	fn(d: array of byte): (ref Patch, string);
+		merge:	fn(hl: list of ref Patch): ref Patch;
+		apply:	fn(h: self ref Patch, d: array of byte): array of byte;
+		sizediff:	fn(h: self ref Patch): int;
+		text:	fn(h: self ref Patch): string;
 	};
 };
