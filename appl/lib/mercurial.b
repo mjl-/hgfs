@@ -53,8 +53,6 @@ Nodeid.parse(s: string): (ref Nodeid, string)
 
 Nodeid.create(d: array of byte, n1, n2: ref Nodeid): ref Nodeid
 {
-	say(sprint("nodeid.create, len d %d, n1 %s n2 %s", len d, n1.text(), n2.text()));
-
 	if(Nodeid.cmp(n1, n2) > 0)
 		(n1, n2) = (n2, n1);
 
@@ -105,8 +103,6 @@ nullchange: Change;
 
 Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 {
-	say("change.parse");
-
 	c := ref nullchange;
 	c.nodeid = e.nodeid;
 	c.rev = e.rev;
@@ -199,7 +195,6 @@ split(buf: array of byte, b: byte): (array of byte, array of byte)
 
 Manifest.parse(d: array of byte, n: ref Nodeid): (ref Manifest, string)
 {
-	say("manifest.parse");
 	files: list of ref Manifestfile;
 
 	line: array of byte;
@@ -215,9 +210,9 @@ Manifest.parse(d: array of byte, n: ref Nodeid): (ref Manifest, string)
 			* =>	return (nil, sprint("unknown flags: %q", flagstr));
 			}
 			nodeid = nodeid[:40];
-			say(sprint("flags=%x", flags));
+			#say(sprint("manifest flags=%x", flags));
 		}
-		say(sprint("nodeid=%q path=%q", string nodeid, string path));
+		# say(sprint("nodeid=%q path=%q", string nodeid, string path));
 		mf := ref Manifestfile(string path, 0, ref Nodeid(unhex(string nodeid)), flags);
 		files = mf::files;
 	}
@@ -289,7 +284,6 @@ reconstructlength(bufs: list of array of byte): (big, string)
 		if(perr != nil)
 			return (big -1, sprint("error decoding patch: %s", perr));
 
-		say("patch: "+p.text());
 		size += big p.sizediff();
 	}
 
@@ -1205,13 +1199,11 @@ Patch.parse(d: array of byte): (ref Patch, string)
 {
 	o := 0;
 	l: list of ref Hunk;
-	say(sprint("hunk.parse, buf %s", hex(d)));
 	while(o+12 <= len d) {
 		start, end, length: int;
 		(start, o) = g32(d, o);
 		(end, o) = g32(d, o);
 		(length, o) = g32(d, o);
-		say(sprint("s %d e %d l %d", start, end, length));
 		if(start > end)
 			return (nil, sprint("bad data, start %d > end %d", start, end));
 		if(o+length > len d)
@@ -1280,57 +1272,49 @@ Entry.text(e: self ref Entry): string
 
 inflatebuf(src: array of byte): (array of byte, string)
 {
-	#origsrc := src;
-	src = src[2:];
-	say(sprint("inflating %d bytes of data", len src));
+	l: list of array of byte;
 
-	rqch := inflate->start("vd");
-	startmsg := <-rqch;
-	if(tagof startmsg != tagof (Filter->Rq).Start)
-		return (nil, "invalid first message from inflate filter");
-	dst := array[0] of byte;
-	sent := 0;
-	for(;;) {
-		msg := <-rqch;
-		pick m := msg {
-		Start =>
-			return (nil, "received another start message");
-		Fill =>
-			give := len src-sent;
-			if(give > len m.buf)
-				give = len m.buf;
-			say(sprint("fill, give %d, sent %d, len m.buf %d", give, sent, len m.buf));
-			m.buf[:] = src[sent:sent+give];
-			m.reply <-= give;
-			sent += give;
-		Result =>
-			say(sprint("result, len m.buf %d", len m.buf));
-			ndst := array[len dst+len m.buf] of byte;
-			ndst[:] = dst;
-			ndst[len dst:] = m.buf;
-			dst = ndst;
-			m.reply <-= 0;
-		Finished =>
-			if(len m.buf != 0)
-				say("trailing bytes after inflating");
-			return (dst, nil);
-		Info =>
-			say("filter: "+m.msg);
-		Error =>
-			#writefile("deflate.bin", origsrc);
-			return (nil, "error from filter: "+m.e);
-		}
+	rqch := inflate->start("z");
+	<-rqch;
+	for(;;) 
+	pick m := <-rqch {
+	Start =>
+		return (nil, "received another start message");
+	Fill =>
+		n := len src;
+		if(n > len m.buf)
+			n = len m.buf;
+		m.buf[:] = src[:n];
+		m.reply <-= n;
+		src = src[n:];
+	Result =>
+		buf := array[len m.buf] of byte;
+		buf[:] = m.buf;
+		l = buf::l;
+		m.reply <-= 0;
+	Finished =>
+		if(len m.buf != 0)
+			return (nil, "inflatebuf: trailing bytes after inflating: "+hex(m.buf));
+		return (flatten(lists->reverse(l)), nil);
+	Info =>
+		say("filter: "+m.msg);
+	Error =>
+		return (nil, "error from filter: "+m.e);
 	}
 }
 
-writefile(path: string, d: array of byte)
+flatten(l: list of array of byte): array of byte
 {
-	fd := sys->create(path, Sys->OWRITE, 8r666);
-	if(fd == nil)
-		raise sprint("creating %q: %r", path);
-	if(sys->write(fd, d, len d) != len d)
-		raise sprint("writing to %q: %r", path);
-	say(sprint("wrote %d bytes to %q", len d, path));
+	n := 0;
+	for(t := l; t != nil; t = tl t)
+		n += len hd l;
+	d := array[n] of byte;
+	o := 0;
+	for(; l != nil; l = tl l) {
+		d[o:] = hd l;
+		o += len hd l;
+	}
+	return d;
 }
 
 unhex(s: string): array of byte
