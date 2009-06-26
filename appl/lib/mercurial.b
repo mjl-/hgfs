@@ -1094,6 +1094,8 @@ Patch.apply(p: self ref Patch, b: array of byte): array of byte
 
 Group: adt {
 	l:	list of array of byte;
+	length:	int;	# original length of group
+	o:	int;	# offset of hd l
 
 	add:	fn(g: self ref Group, buf: array of byte);
 	copy:	fn(g: self ref Group, sg: ref Group, s, e: int);
@@ -1105,42 +1107,53 @@ Group: adt {
 Group.add(g: self ref Group, buf: array of byte)
 {
 	g.l = buf::g.l;
+	g.length += len buf;
 }
 
 Group.copy(g: self ref Group, sg: ref Group, s, e: int)
 {
-	o := 0;
-	n := e-s;
-	for(l := sg.l; n > 0 && l != nil; l = tl l) {
-		b := hd l;
-		if(o+len b < s) {
-			o += len b;
-			continue;
+	# seek gs to s
+	drop := s-sg.o;
+	while(drop > 0) {
+		b := hd sg.l;
+		sg.l = tl sg.l;
+		if(drop >= len b) {
+			sg.o += len b;
+			drop -= len b;
+		} else {
+			sg.l = b[drop:]::sg.l;
+			sg.o += drop;
+			drop = 0;
 		}
-		if(o < s) {
-			b = b[s-o:];
-			o = s;
-		}
-		m := len b;
-		if(m > n)
-			m = n;
-		say(sprint("copy, len b %d, m %d, len g.l %d", len b, m, len g.l));
-		g.l = b[:m]::g.l;
-		n -= m;
-		o += m;
 	}
-	if(n != 0)
-		raise "bad";
+	if(sg.o != s) raise "bad";
+
+	# copy from sg into g
+	n := e-s;
+	while(n > 0 && sg.l != nil) {
+		b := hd sg.l;
+		sg.l = tl sg.l;
+		take := len b;
+		if(take > n) {
+			take = n;
+			sg.l = b[take:]::sg.l;
+		}
+		g.add(b[:take]);
+		sg.o += take;
+		n -= take;
+	}
+	if(n != 0) raise "bad";
 }
 
+# note: we destruct g (in Group.copy), keeping g.o & hd g.l in sync.
+# we never have to go back before an offset after having read it.
 Group.apply(g: ref Group, p: ref Patch): ref Group
 {
-	ng := ref Group;
+	g = ref *g;
+	ng := ref Group (nil, 0, 0);
 	o := 0;
 	for(l := p.l; l != nil; l = tl l) {
 		h := hd l;
-		say(sprint("apply, copy o=%d, start=%d", o, h.start));
-		say(sprint("apply, add, len buf %d", len h.buf));
 		ng.copy(g, o, h.start);
 		ng.add(h.buf);
 		o = h.end;
@@ -1152,17 +1165,13 @@ Group.apply(g: ref Group, p: ref Patch): ref Group
 
 Group.size(g: self ref Group): int
 {
-	n := 0;
-	for(l := g.l; l != nil; l = tl l)
-		n += len hd l;
-	return n;
+	return g.length;
 }
 
 Group.flatten(g: self ref Group): array of byte
 {
 	d := array[g.size()] of byte;
 	o := 0;
-say(sprint("flatten, len g.l %d, len d %d", len g.l, len d));
 	for(l := g.l; l != nil; l = tl l) {
 		d[o:] = hd l;
 		o += len hd l;
@@ -1172,7 +1181,7 @@ say(sprint("flatten, len g.l %d, len d %d", len g.l, len d));
 
 Patch.applymany(base: array of byte, l: list of array of byte): (array of byte, string)
 {
-	g := ref Group (base::nil);
+	g := ref Group (base::nil, len base, 0);
 	for(; l != nil; l = tl l) {
 		(p, err) := Patch.parse(hd l);
 		if(err != nil)
