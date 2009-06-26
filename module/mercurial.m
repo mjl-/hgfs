@@ -157,8 +157,8 @@ Mercurial: module {
 		l:	list of ref Hunk;
 
 		parse:	fn(d: array of byte): (ref Patch, string);
-		merge:	fn(hl: list of ref Patch): ref Patch;
-		apply:	fn(h: self ref Patch, d: array of byte): array of byte;
+		apply:	fn(p: self ref Patch, d: array of byte): array of byte;
+		applymany:	fn(base: array of byte, l: list of array of byte): (array of byte, string);
 		sizediff:	fn(h: self ref Patch): int;
 		text:	fn(h: self ref Patch): string;
 	};

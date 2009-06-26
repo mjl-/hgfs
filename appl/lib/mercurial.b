@@ -262,15 +262,9 @@ Revlog.isindexonly(rl: self ref Revlog): int
 reconstruct(rl: ref Revlog, e: ref Entry, bufs: list of array of byte): (array of byte, string)
 {
 	# first is base, later are patches
-	d := hd bufs;
-	for(bufs = tl bufs; bufs != nil; bufs = tl bufs) {
-		(p, perr) := Patch.parse(hd bufs);
-		if(perr != nil)
-			return (nil, sprint("error decoding patch: %s", perr));
-
-		say("patch: "+p.text());
-		d = p.apply(d);
-	}
+	(d, err) := Patch.applymany(hd bufs, tl bufs);
+	if(err != nil)
+		return (nil, err);
 
 	# verify data is correct
 	# nodeidcache will always be filled when we get here
@@ -1076,27 +1070,116 @@ Hunk.text(h: self ref Hunk): string
 	return sprint("<hunk s=%d e=%d buf=%s length=%d>", h.start, h.end, string h.buf, len h.buf);
 }
 
-Patch.apply(p: self ref Patch, d: array of byte): array of byte
+Patch.apply(p: self ref Patch, b: array of byte): array of byte
 {
-	off := 0;
+	n := len b+p.sizediff();
+	d := array[n] of byte;
+	ae := be := 0;
 	for(l := p.l; l != nil; l = tl l) {
 		h := hd l;
-		del := h.end-h.start;
-		add := len h.buf;
-		diff := add-del;
-		say(sprint("apply, len d %d, del %d add %d, diff %d, off %d", len d, del, add, diff, off));
 
-		s := h.start+off;
-		e := h.end+off;
-		nd := array[len d+diff] of byte;
-		nd[:] = d[:s];
-		nd[s:] = h.buf;
-		nd[s+len h.buf:] = d[e:];
-		d = nd[:];
+		# copy data before hunk from base to dest
+		d[be:] = b[ae:h.start];
+		be += h.start-ae;
 
-		off += diff;
+		# copy new data to dest, and skip the removed part from base
+		d[be:] = h.buf;
+		be += len h.buf;
+		ae = h.end;
+	}
+	# and the trailing common data
+	d[be:] = b[ae:];
+	return d;
+}
+
+Group: adt {
+	l:	list of array of byte;
+
+	add:	fn(g: self ref Group, buf: array of byte);
+	copy:	fn(g: self ref Group, sg: ref Group, s, e: int);
+	flatten:	fn(g: self ref Group): array of byte;
+	size:	fn(g: self ref Group): int;
+	apply:	fn(g: ref Group, p: ref Patch): ref Group;
+};
+
+Group.add(g: self ref Group, buf: array of byte)
+{
+	g.l = buf::g.l;
+}
+
+Group.copy(g: self ref Group, sg: ref Group, s, e: int)
+{
+	o := 0;
+	n := e-s;
+	for(l := sg.l; n > 0 && l != nil; l = tl l) {
+		b := hd l;
+		if(o+len b < s) {
+			o += len b;
+			continue;
+		}
+		if(o < s) {
+			b = b[s-o:];
+			o = s;
+		}
+		m := len b;
+		if(m > n)
+			m = n;
+		say(sprint("copy, len b %d, m %d, len g.l %d", len b, m, len g.l));
+		g.l = b[:m]::g.l;
+		n -= m;
+		o += m;
+	}
+	if(n != 0)
+		raise "bad";
+}
+
+Group.apply(g: ref Group, p: ref Patch): ref Group
+{
+	ng := ref Group;
+	o := 0;
+	for(l := p.l; l != nil; l = tl l) {
+		h := hd l;
+		say(sprint("apply, copy o=%d, start=%d", o, h.start));
+		say(sprint("apply, add, len buf %d", len h.buf));
+		ng.copy(g, o, h.start);
+		ng.add(h.buf);
+		o = h.end;
+	}
+	ng.copy(g, o, g.size());
+	ng.l = lists->reverse(ng.l);
+	return ng;
+}
+
+Group.size(g: self ref Group): int
+{
+	n := 0;
+	for(l := g.l; l != nil; l = tl l)
+		n += len hd l;
+	return n;
+}
+
+Group.flatten(g: self ref Group): array of byte
+{
+	d := array[g.size()] of byte;
+	o := 0;
+say(sprint("flatten, len g.l %d, len d %d", len g.l, len d));
+	for(l := g.l; l != nil; l = tl l) {
+		d[o:] = hd l;
+		o += len hd l;
 	}
 	return d;
+}
+
+Patch.applymany(base: array of byte, l: list of array of byte): (array of byte, string)
+{
+	g := ref Group (base::nil);
+	for(; l != nil; l = tl l) {
+		(p, err) := Patch.parse(hd l);
+		if(err != nil)
+			return (nil, err);
+		g = Group.apply(g, p);
+	}
+	return (g.flatten(), nil);
 }
 
 Patch.sizediff(p: self ref Patch): int
@@ -1107,11 +1190,6 @@ Patch.sizediff(p: self ref Patch): int
 		n += len h.buf - (h.end-h.start);
 	}
 	return n;
-}
-
-Patch.merge(pl: list of ref Patch): ref Patch
-{
-	return hd pl; # xxx implement
 }
 
 Patch.parse(d: array of byte): (ref Patch, string)
@@ -1131,7 +1209,11 @@ Patch.parse(d: array of byte): (ref Patch, string)
 			return (nil, sprint("bad data, hunk points past buffer, o+length %d+%d > len d %d", o, length, len d));
 		buf := array[length] of byte;
 		buf[:] = d[o:o+length];
-		l = ref Hunk(start, end, buf)::l;
+
+		h := ref Hunk (start, end, buf);
+		if(l != nil && h.start < (hd l).end)
+			return (nil, sprint("bad patch, hunk starts before preceding hunk, start %d < end %d", h.start, (hd l).end));
+		l = h::l;
 		o += length;
 	}
 	return (ref Patch(lists->reverse(l)), nil);
@@ -1350,6 +1432,13 @@ workstatedir0(ds: ref Dirstate, base, pre: string): string
 		}
 	}
 	return nil;
+}
+
+max(a, b: int): int
+{
+	if(a > b)
+		return a;
+	return b;
 }
 
 p32(d: array of byte, o: int, v: int): int
