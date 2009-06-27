@@ -5,6 +5,7 @@ include "sys.m";
 	sprint: import sys;
 include "draw.m";
 include "arg.m";
+include "bufio.m";
 include "string.m";
 	str: String;
 include "lists.m";
@@ -45,7 +46,7 @@ init(nil: ref Draw->Context, args: list of string)
 	for(args = tl args; args != nil; args = tl args)
 		l = readfile(hd args)::l;
 	l = lists->reverse(l);
-	(r, err) := Patch.applymany(base, l);
+	(r, err) := Patch.applymany(base, l2a(l));
 	if(err != nil)
 		fail(sprint("applymany: %r"));
 	if(sys->write(sys->fildes(1), r, len r) != len r)
@@ -71,6 +72,15 @@ readfile(f: string): array of byte
 		buf = nbuf;
 	}
 	return buf;
+}
+
+l2a(l: list of array of byte): array of array of byte
+{
+	a := array[len l] of array of byte;
+	i := 0;
+	for(; l != nil; l = tl l)
+		a[i++] = hd l;
+	return a;
 }
 
 warn(s: string)

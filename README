@@ -39,11 +39,10 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- all: make faster
-
 - cgi/websrv: calculate binary patches, instead of just sending a
   fake patch overpatching the whole file with new data
 - cgi/websrv: test with various client versions
+- cgi/websrv: use hg/fs?  so we can use its repo/revlog cache.
 
 - hg/fs: improve bookkeeping for revtree:  don't store full path, and
   keep track of gen of higher directory, for quick walk to ..
@@ -56,17 +55,11 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - hg/fs: make plan to deal with revisions-by-nodeid.  just revision
   number is not good enough.
 
+- library: make proper binary diffs.
 - library: function to resolve revision string to actual revision
   (e.g. "tip", numeric, "null", tag, nodeid, etc).  should be used
   at least by cmd lookup in websrv.
-- library: have to detect when .i-only is changed into using .d;  have
-  to invalidate/fix cache
 - library: understand more revlog revision & flags in .i?
 
 - use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
 - think about other tools such as pull & clone.
-- could implement a httpfs that serves a http url with plain http.
-  since readdirs & stats cannot be done, it has to be special.  walks
-  would always succeed.  all opens/reads are assumed to be on plain
-  files.  this could then be used to serve static-http repo's.  but
-  it sounds ugly/fiddly.

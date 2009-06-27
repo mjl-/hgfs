@@ -5,6 +5,7 @@ include "sys.m";
 	sprint: import sys;
 include "draw.m";
 include "arg.m";
+include "bufio.m";
 include "string.m";
 	str: String;
 include "mercurial.m";

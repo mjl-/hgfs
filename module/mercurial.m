@@ -16,6 +16,7 @@ Mercurial: module {
 	};
 	nullnode: ref Nodeid;
 
+
 	Change: adt {
 		rev:	int;
 		nodeid:	ref Nodeid;
@@ -45,44 +46,6 @@ Mercurial: module {
 		parse:	fn(data: array of byte, n: ref Nodeid): (ref Manifest, string);
 	};
 
-	Entry: adt {
-		rev:	int;
-		offset:	big;
-		ioffset:	big;  # when .d is not present, offset has value as if it were.  ioffset is compensates for that, and points to real data offset in .i file
-		flags:	int;
-		csize:	int;
-		uncsize:	int;
-		base, link, p1, p2:     int;
-		nodeid:	ref Nodeid;
-
-		parse:	fn(buf: array of byte, index: int): (ref Entry, string);
-		text:	fn(e: self ref Entry): string;
-	};
-
-	# Revlog.flags
-	Indexonly: con 1<<iota;
-
-	Revlog: adt {
-		path:	string;
-		ifd, dfd:	ref Sys->FD;
-		version, flags: int;
-		nodeidcache:	array of ref Nodeid;
-		entrycache:	array of ref Entry;  # only when Indexonly
-		icacheoff:	big;  # offset in .i-file where uncached entries start
-
-		open:	fn(path: string): (ref Revlog, string);
-		isindexonly:	fn(rl: self ref Revlog): int;
-		get:	fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, ref Entry, string);
-		getrev:	fn(rl: self ref Revlog, rev: int): (array of byte, string);
-		getnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string);
-		lastrev:	fn(rl: self ref Revlog): (int, string);
-		find:	fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string);
-		findnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string);
-		findrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, string);
-		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
-		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
-		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
-	};
 
 	STnormal, STneedmerge, STremove, STadd, STuntracked: con iota; # Dirstatefile.state
 	SZcheck, SZdirty: con iota;
@@ -104,6 +67,7 @@ Mercurial: module {
 
 	workdirstate:	fn(path: string): (ref Dirstate, string);
 
+
 	Tag: adt {
 		name:	string;
 		n:	ref Nodeid;
@@ -116,6 +80,56 @@ Mercurial: module {
 		rev:	int;
 	};
 
+
+	Entry: adt {
+		rev:	int;
+		offset:	big;
+		ioffset:	big;  # when .d is not present, offset has value as if it were.  ioffset is compensates for that, and points to real data offset in .i file
+		flags:	int;
+		csize:	int;
+		uncsize:	int;
+		base, link, p1, p2:     int;
+		nodeid:	ref Nodeid;
+
+		parse:	fn(buf: array of byte, index: int): (ref Entry, string);
+		text:	fn(e: self ref Entry): string;
+	};
+
+	# Revlog.flags
+	Indexonly: con 1<<iota;
+
+	Revlog: adt {
+		path:	string;
+		ifd:	ref Sys->FD;
+		dfd:	ref Sys->FD;  # nil when .i-only
+		bd:	ref Bufio->Iobuf;
+		version:int;
+		flags:	int;
+		ents:	array of ref Entry;
+
+		cache:	array of array of byte;
+		ncache:	int;
+
+		full:	array of byte;
+		fullrev:int;
+
+		length:	big;
+		mtime:	int;
+
+		open:		fn(path: string): (ref Revlog, string);
+		isindexonly:	fn(rl: self ref Revlog): int;
+		get:		fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, ref Entry, string);
+		getrev:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
+		getnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string);
+		lastrev:	fn(rl: self ref Revlog): (int, string);
+		find:		fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string);
+		findnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string);
+		findrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, string);
+		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
+		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
+		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
+	};
+
 	Repo: adt {
 		path:	string;
 		requires:	list of string;
@@ -123,12 +137,15 @@ Mercurial: module {
 		lastrevision:	int;
 		lastmtime:	int;
 
+		cl:		ref Revlog;  # cached
+		ml:		ref Revlog;
+
 		open:		fn(path: string): (ref Repo, string);
 		find:		fn(path: string): (ref Repo, string);
 		name:		fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;
-		escape:	fn(r: self ref Repo, path: string): string;
+		escape:		fn(r: self ref Repo, path: string): string;
 		storedir:	fn(r: self ref Repo): string;
 		openrevlog:	fn(r: self ref Repo, path: string): (ref Revlog, string);
 		manifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest, string);
@@ -146,9 +163,11 @@ Mercurial: module {
 		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
 	};
 
+
 	Hunk: adt {
-		start, end:	int;
-		buf: array of byte;
+		start,
+		end:	int;
+		buf:	array of byte;
 
 		text:	fn(h: self ref Hunk): string;
 	};
@@ -158,7 +177,7 @@ Mercurial: module {
 
 		parse:	fn(d: array of byte): (ref Patch, string);
 		apply:	fn(p: self ref Patch, d: array of byte): array of byte;
-		applymany:	fn(base: array of byte, l: list of array of byte): (array of byte, string);
+		applymany:	fn(base: array of byte, patches: array of array of byte): (array of byte, string);
 		sizediff:	fn(h: self ref Patch): int;
 		text:	fn(h: self ref Patch): string;
 	};

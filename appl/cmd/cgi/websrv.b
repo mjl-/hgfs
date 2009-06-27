@@ -5,6 +5,7 @@ include "sys.m";
 	sprint: import sys;
 include "draw.m";
 include "arg.m";
+include "bufio.m";
 include "env.m";
 	env: Env;
 include "string.m";
@@ -178,8 +179,6 @@ branches()
 		if(i < 0)
 			fail(sprint("nodeid %s not found", n.text()));
 		e := entries[i];
-		if(e.p1 >= 0)
-			e = entries[e.p1];
 		while(e.p1 >= 0 && e.p2 < 0)
 			e = entries[e.p1];
 
@@ -369,14 +368,12 @@ openhist(): (ref Revlog, ref Revlog, array of ref Entry, array of ref Entry)
 filldesc(centries, a: array of ref Entry, nodes: array of ref Nodeid)
 {
 	for(i := 0; i < len nodes; i++) {
-		ni: int;
-		if(nodes[i].isnull())
-			ni = 0;
-		else
+		ni := 0;
+		if(!nodes[i].isnull())
 			ni = findnodeid(centries, nodes[i]);
 		if(ni < 0)
 			fail(sprint("no such nodeid %s", nodes[i].text()));
-		say(sprint("returning root entry %d", ni));
+		say(sprint("mark root entry %d", ni));
 		a[ni] = centries[ni];
 	}
 
@@ -385,7 +382,7 @@ filldesc(centries, a: array of ref Entry, nodes: array of ref Nodeid)
 	for(i = 0; i < len centries; i++) {
 		e := centries[i];
 		if((e.p1 >= 0 && a[e.p1] != nil) || (e.p2 >= 0 && a[e.p2] != nil)) {
-			say(sprint("returning entry %d", i));
+			say(sprint("mark entry %d", i));
 			a[i] = centries[i];
 		}
 	}
@@ -400,7 +397,7 @@ fillanc(centries, a: array of ref Entry, nodes: array of ref Nodeid)
 		ni = findnodeid(centries, nodes[i]);
 		if(ni < 0)
 			fail(sprint("no such nodeid %s", nodes[i].text()));
-		say(sprint("returning head %d", ni));
+		say(sprint("mark head %d", ni));
 		fillanc0(centries, a, ni);
 	}
 }
@@ -445,8 +442,10 @@ changegroupsubset()
 	filldesc(centries, desc, bases);
 	fillanc(centries, anc, heads);
 	for(i := 0; i < len anc; i++)
-		if(desc[i] == nil || anc[i] == nil)
+		if(desc[i] == nil || anc[i] == nil) {
 			desc[i] = nil;
+			say(sprint("unmarking %d", i));
+		}
 	mkchangegroup(cl, ml, centries, mentries, desc);
 }
 
@@ -457,9 +456,9 @@ mkchangegroup(cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry)
 	say("mkchangegroup, sending these entries:");
 	for(i := 0; i < len sel; i++)
 		if(sel[i] != nil)
-			say(sprint("\t%s\n", sel[i].text()));
+			say(sprint("\t%s", sel[i].text()));
 
-	(out, err) := pushfilter(deflate, "z", stdout);
+	(out, err) := pushfilter(deflate, "z0", stdout);
 	if(err != nil)
 		fail("init deflate: "+err);
 
@@ -564,7 +563,6 @@ filegroup(out: ref Sys->FD, p: ref Path, centries, sel: array of ref Entry)
 
 	wrote := 0;
 
-	say(sprint("path %s", p.path));
 	prev := -1;
 	for(l := p.nodeids; l != nil; l = tl l) {
 		n := hd l;
@@ -605,7 +603,6 @@ filegroup(out: ref Sys->FD, p: ref Path, centries, sel: array of ref Entry)
 		o += 20;
 		hdr[o:] = getnodeid(centries, e.link).d;
 		o += 20;
-
 		ewrite(out, hdr);
 		ewrite(out, delta);
 	}
@@ -657,8 +654,16 @@ getnodeid(a: array of ref Entry, p: int): ref Nodeid
 
 ewrite(fd: ref Sys->FD, d: array of byte)
 {
-	if(sys->write(fd, d, len d) != len d)
-		fail(sprint("write: %r"));
+	if(len d == 0)
+		return;
+
+	{
+		if(sys->write(fd, d, len d) != len d)
+			fail(sprint("write: %r"));
+	} exception e {
+	"write on closed pipe" =>
+		fail("write "+e);
+	}
 }
 
 pushfilter(f: Filter, params: string, out: ref Sys->FD): (ref Sys->FD, string)
@@ -738,14 +743,12 @@ say(s: string)
 
 fail(s: string)
 {
-	hfd := dfd := stdout;
-	if(statusprinted || !iscgi)
-		hfd = stderr;
-	if(statusprinted)
-		dfd = stderr;
-	sys->fprint(hfd, "status: 500 internal error\r\n");
-	sys->fprint(hfd, "content-type: text/plain; charset=utf-8\r\n");
-	sys->fprint(hfd, "\r\n");
-	sys->fprint(dfd, "%s\n", s);
+	warn(s);
+	if(iscgi && !statusprinted) {
+		sys->print("status: 500 internal error\r\n");
+		sys->print("content-type: text/plain; charset=utf-8\r\n");
+		sys->print("\r\n");
+		sys->print("%s\n", s);
+	}
 	raise "fail:"+s;
 }

@@ -1184,7 +1184,7 @@ kill(pid: int)
 
 warn(s: string)
 {
-	sys->fprint(sys->fildes(2), "%s\n", s);
+	sys->fprint(sys->fildes(2), "hg/fs: %s\n", s);
 }
 
 say(s: string)

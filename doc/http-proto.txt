@@ -54,8 +54,8 @@ description:
         two parents, starting at the given tip.
 
         if the base for the nullnode is requested, just return all
-        of tip,base,p1,p2 as null nodes.  if the base of the first
-        revision is requested, return the node itself.
+        of tip,base,p1,p2 as null nodes.  if the requested node
+        itself is the base node, return itself.
 
 output:
         one or more lines (ending with a newline), each with four
