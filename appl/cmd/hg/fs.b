@@ -234,6 +234,7 @@ dostyx(gm: ref Tmsg)
 		"lookup"	=> keys = "key"::nil;
 		"changegroup"	=> keys = "roots"::nil;
 		"changegroupsubset"	=> keys = "bases"::"heads"::nil;
+		"revision"	=> keys = "key"::nil;
 		}
 
 		(args, err) := wireargs(s, keys);
@@ -247,10 +248,17 @@ dostyx(gm: ref Tmsg)
 		"lookup"	=> wirefidstr(m, hgwire->lookup(repo, hd args));
 		"changegroup"	=> wirefidfd(m, hgwire->changegroup(repo, hd args));
 		"changegroupsubset"	=> wirefidfd(m, hgwire->changegroupsubset(repo, hd args, hd tl args));
+		"revision" 	=>
+			rev: int;
+			n: ref Nodeid;
+			(rev, n, err) = repo.lookup(hd args);
+			say(sprint("repo.lookup %q, rev %d, n nil %d, err %q", hd args, rev, n == nil, err));
+			if(n == nil && err == nil)
+				err = "no such revision";
+			wirefidstr(m, (string rev, err));
 		* =>	return replyerror(m, sprint("unknown command %#q", cmd));
 		}
-		say("qwire write done");
-		
+
 	Read =>
 		f := srv.getfid(m.fid);
 		if(f.qtype & Sys->QTDIR) {

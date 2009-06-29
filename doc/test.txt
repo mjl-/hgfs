@@ -2,15 +2,37 @@
 
 these examples are against a hgfs repository, with rev 36 as latest.
 
-fn h { hg/websrv $* }
-fn m { hget -v 'http://localhost:8000/?'^$"* }
+fn h { hget -v 'http://localhost/hgfs/?'^$"* }
+fn m { hget -v 'http://localhost:8000/hgfs/?'^$"* }
 fn t { echo websrv:; h $*; echo mercurial:; m $* }
 
 fn d { cat $* | filtrate -p z inflate | hg/printchangegroup }
 fn dv { cat $* | filtrate -p z inflate | hg/printchangegroup -v } 
 
-httpd -l /fd/2 -c / {hg/websrv -d} GET .
-httpd -l /fd/2 -c / {hg/websrv -d -a $home/code} GET $home/code/
+mount {mntgen} /n/hg
+unmount /n/hg/hgfs
+kill -g Httpd
+mount {hg/fs -dd -h $home/code/hgfs} /n/hg/hgfs
+httpd -l /fd/2 -c / {hg/websrv -d /n/hg >[2]/tmp/websrv.txt} GET $home/code/
+
+hget 'http://localhost/hgfs/?cmd=lookup&key=0' >[2]/dev/null
+
+telnet localhost 80
+GET /hgfs/?cmd=lookup&key=0 HTTP/1.1
+host: localhost
+connection: close
+
+
+nl='
+'
+<>[3]/n/hg/hgfs/wire {
+	echo -n lookup^$nl^0^$nl >>/fd/3 && cat /fd/3
+}
+
+<>[3]/n/hg/hgfs/wire {
+        echo -n revision^$nl^default^$nl >>/fd/3 && cat /fd/3
+}
+
 
 revs="0 1 10 15 20 25 30 35 36"
 revs=`seq 0 36`
