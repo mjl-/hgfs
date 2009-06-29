@@ -529,27 +529,30 @@ dropmeta(d: array of byte): array of byte
 }
 
 # return the revision data, without meta-data
-get(rl: ref Revlog, e: ref Entry): (array of byte, string)
+get(rl: ref Revlog, e: ref Entry, withmeta: int): (array of byte, string)
 {
 	if(e.rev == rl.fullrev) {
 		#say(sprint("get, using cache for rev %d", e.rev));
-		return (dropmeta(rl.full), nil);
+		d := rl.full;
+		if(!withmeta)
+			d = dropmeta(d);
+		return (d, nil);
 	}
 
 	#say(sprint("get, going to reconstruct for rev %d", e.rev));
-	buf: array of byte;
+	d: array of byte;
 	(bufs, err) := getbufs(rl, e);
 	if(err == nil)
-		(buf, err) = reconstruct(rl, e, bufs[0], bufs[1:]);
-	if(err == nil)
-		buf = dropmeta(buf);
-	return (buf, err);
+		(d, err) = reconstruct(rl, e, bufs[0], bufs[1:]);
+	if(err == nil && !withmeta)
+		d = dropmeta(d);
+	return (d, err);
 }
 
 getlength(rl: ref Revlog, e: ref Entry): (big, string)
 {
 	length := big -1;
-	(d, err) := get(rl, e);
+	(d, err) := get(rl, e, 0);
 	if(err == nil)
 		length = big len d;
 	return (length, err);
@@ -562,7 +565,7 @@ Revlog.get(rl: self ref Revlog, rev: int): (array of byte, string)
 	d: array of byte;
 	(e, err) := rl.find(rev);
 	if(err == nil)
-		(d, err) = get(rl, e);
+		(d, err) = get(rl, e, 0);
 	return (d, err);
 }
 
@@ -596,7 +599,7 @@ Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
 
 	#say("creating new delta with full contents");
 	buf: array of byte;
-	(buf, err) = get(rl, e);
+	(buf, err) = get(rl, e, 1);
 	obuflen := 0;
 	if(err == nil && prev >= 0) {
 		pe: ref Entry;
