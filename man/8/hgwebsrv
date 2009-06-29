@@ -5,6 +5,9 @@ hg/websrv \- serve mercurial http pull protocol
 .B hg/websrv
 [
 .B -d
+] [
+.B -u
+.I baseurl
 ]
 .I root
 [
@@ -21,11 +24,18 @@ are served.  This is typically
 .I /n/hg
 containing one or more mounted hg/fs'es.
 If no explicit repositories to allow are specified, all repositories are allowed.
+Http access from browsers get a message that there is no html front-end, option
+.B -u
+can change this.
 .PP
 Options:
 .TP
 .B -d
 Print debugging information.
+.TP
+.BI -u " baseurl"
+In responses to browsers, mention that a html front-end exists at the
+concatenation of baseurl and the repository name.
 .PP
 .SH EXAMPLES
 Start a httpd to serve the repositories in

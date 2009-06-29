@@ -29,6 +29,7 @@ init()
 {
 	sys = load Sys Sys->PATH;
 	bufio = load Bufio Bufio->PATH;
+	bufio->open("/dev/null", Bufio->OREAD); # xxx ensure bufio is properly initialized
 	lists = load Lists Lists->PATH;
 	keyring = load Keyring Keyring->PATH;
 	str = load String String->PATH;
