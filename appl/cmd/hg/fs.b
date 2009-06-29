@@ -28,12 +28,12 @@ include "lists.m";
 	lists: Lists;
 include "mercurial.m";
 	mercurial: Mercurial;
-	Revlog, Repo, Nodeid, Change, Manifest, Manifestfile: import mercurial;
+	Branch, Tag, Revlog, Repo, Entry, Nodeid, Change, Manifest, Manifestfile: import mercurial;
 
 
 dflag: int;
 
-Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtags, Qbranches, Qtgz, Qstate, Qrepofile, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
+Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtags, Qbranches, Qtgz, Qstate, Qfilesrev, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
 tab := array[] of {
 	(Qroot,		"<reponame>",	Sys->DMDIR|8r555),
 	(Qlastrev,	"lastrev",	8r444),
@@ -44,13 +44,13 @@ tab := array[] of {
 	(Qbranches,	"branches",	8r444),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
 	(Qstate,	"state",	8r444),
-	(Qrepofile,	"<repofile>",	Sys->DMDIR|8r555),
+	(Qfilesrev,	"<filesrev>",	Sys->DMDIR|8r555),
 	(Qlogrev,	"<logrev>",	8r444),
 	(Qmanifestrev,	"<manifestrev>",	8r444),
 	(Qtgzrev,	"<tgzrev>",	8r444),
 };
 
-# Qrepofiles are the individual files in a particular revision.
+# Qfilesrev are the individual files in a particular revision.
 # qids for files in a revision are composed of:
 # 8 bits qtype
 # 24 bits manifest file generation number (<<8)
@@ -64,16 +64,17 @@ srv: ref Styxserver;
 repo: ref Repo;
 reponame: string;
 starttime: int;
+
 tgztab: ref Table[ref Tgz];
+
 revtreetab: ref Table[ref Revtree];
 revtreesize := 0;
 revtreemax := 64;
-filetab: ref Strhash[ref Node];
-filecachesize := 0;
-filecachemax := 512*1024;
-changetab, manifesttab: ref Revcache;
-changecachemax := 24*1024;
-manifestcachemax := 8*1024;
+
+revloglock: chan of int;
+revlogmax: con 16;
+revlogtab := array[revlogmax] of (string, ref Revlog, int);  # path, revlog, lastuse
+Revlogtimeout: con 5*60;  # time after last use that cached revlog is scheduled for remove
 
 HgFs: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -102,13 +103,10 @@ init(nil: ref Draw->Context, args: list of string)
 	sys->pctl(Sys->NEWPGRP, nil);
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-Dd] [-C changecache] [-F filecache] [-M manifestcache] [-T revcache] [-h path]");
+	arg->setusage(arg->progname()+" [-Dd] [-T revcache] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'D' =>	styxservers->traceset(1);
-		'C' =>	changecachemax = int arg->earg();
-		'F' =>	filecachemax = int arg->earg();
-		'M' =>	manifestcachemax = int arg->earg();
 		'T' =>	revtreemax = int arg->earg();
 		'd' =>	dflag++;
 			if(dflag > 1)
@@ -122,6 +120,9 @@ init(nil: ref Draw->Context, args: list of string)
 
 	starttime = daytime->now();
 
+	revloglock = chan[1] of int;
+	revloglock <-= 1;
+
 	err: string;
 	(repo, err) = Repo.find(hgpath);
 	if(err != nil)
@@ -132,9 +133,6 @@ init(nil: ref Draw->Context, args: list of string)
 	tab[Qroot].t1 = reponame;
 	tgztab = tgztab.new(32, nil);
 	revtreetab = revtreetab.new(1+revtreemax/16, nil);
-	filetab = filetab.new(1+filecachemax/16, nil);
-	changetab = Revcache.new(changecachemax);
-	manifesttab = Revcache.new(manifestcachemax);
 
 	navch := chan of ref Navop;
 	spawn navigator(navch);
@@ -144,6 +142,7 @@ init(nil: ref Draw->Context, args: list of string)
 	(msgc, srv) = Styxserver.new(sys->fildes(0), nav, big Qroot);
 
 	spawn styxsrv(msgc);
+	spawn revlogcleaner();
 }
 
 styxsrv(msgc: chan of ref Tmsg)
@@ -166,15 +165,6 @@ done:
 dostyx(gm: ref Tmsg)
 {
 	pick m := gm {
-	Open =>
-		(fid, mode, nil, err) := srv.canopen(m);
-		if(fid == nil)
-			return replyerror(m, err);
-		q := int fid.path&16rff;
-		id := int fid.path>>8;
-
-		srv.default(m);
-
 	Read =>
 		f := srv.getfid(m.fid);
 		if(f.qtype & Sys->QTDIR) {
@@ -243,18 +233,18 @@ dostyx(gm: ref Tmsg)
 				return replyerror(m, err);
 			srv.reply(ref Rmsg.Read(m.tag, buf));
 
-		Qrepofile  =>
+		Qfilesrev =>
+			d: array of byte;
 			(rev, gen) := revgen(f.path);
 			(r, err) := treeget(rev);
-
-			d: array of byte;
-			(d, err) = fileget(r, gen);
+			if(err == nil)
+				(d, err) = fileread(r, gen, m.count, m.offset);
 			if(err != nil)
 				return replyerror(m, err);
-			srv.reply(styxservers->readbytes(m, d));
+			srv.reply(ref Rmsg.Read (m.tag, d));
 
 		Qstate =>
-			s := sprint("reponame %q\nrevtree size %d max %d\nfiles size %d max %d\n", reponame, revtreesize, revtreemax, filecachesize, filecachemax);
+			s := sprint("reponame %q\nrevtree size %d max %d\n", reponame, revtreesize, revtreemax);
 
 			tgzstr := "";
 			ntgz := 0;
@@ -277,19 +267,6 @@ dostyx(gm: ref Tmsg)
 				}
 			}
 			s += sprint("revtreetab: %d revtrees\n", nrt)+rtstr;
-
-			nodestr := "";
-			nnodes := 0;
-			for(i = 0; i < len filetab.items; i++) {
-				for(l := filetab.items[i]; l != nil; l = tl l) {
-					n := (hd l).t1;
-					nodestr += sprint("file nodeid %s len data %d used %d\n", n.nodeid.text(), len n.data, n.used);
-					nnodes++;
-				}
-			}
-			s += sprint("filetab: %d files\n", nnodes)+nodestr;
-			s += sprint("cachetab: size %d max %d\n", changetab.size, changetab.max);
-			s += sprint("manifesttab: size %d max %d\n", manifesttab.size, manifesttab.max);
 
 			srv.reply(styxservers->readstr(m, s));
 
@@ -325,7 +302,7 @@ again:
 		Stat =>
 			say("stat");
 			case q {
-			Qrepofile =>
+			Qfilesrev =>
 				(r, err) := treeget(rev);
 				say(sprint("navigator, stat, op.path %bd, rev %d, gen %d", op.path, rev, gen));
 				d: ref Sys->Dir;
@@ -341,7 +318,7 @@ again:
 
 			# handle repository files first, other are handled below
 			case q {
-			Qrepofile =>
+			Qfilesrev =>
 				(r, err) := treeget(rev);
 				d: ref Sys->Dir;
 				if(err == nil)
@@ -372,42 +349,27 @@ again:
 				op.reply <-= (nil, styxservers->Enotfound);
 
 			Qfiles =>
-				rev: int;
-				err: string;
-				if(op.name == "last")
-					(rev, err) = repo.lastrev();
-				else
-					(rev, err) = parserev(op.name);
+				(nrev, err) := parserev(op.name);
 				if(err != nil) {
 					op.reply <-= (nil, err);
 					continue again;
 				}
-				(change, manifest, merr) := repo.manifest(rev);
-				if(merr != nil) {
-					op.reply <-= (nil, merr);
-					continue again;
-				}
 
 				say("walk to files/<rev>/");
-				(r, rerr) := treeget(rev);
+				(r, rerr) := treeget(nrev);
 				if(rerr != nil)
 					op.reply <-= (nil, rerr);
 				else
 					op.reply <-= r.stat(0);
 
 			Qlog or Qmanifest =>
-				err: string;
-				if(op.name == "last")
-					(rev, err) = repo.lastrev();
-				else
-					(rev, err) = parserev(op.name);
-
+				(nrev, err) := parserev(op.name);
 				if(err != nil) {
 					op.reply <-= (nil, err);
 					continue again;
 				}
 
-				op.reply <-= (dir(child(q)|big rev<<32, revmtime(rev)), nil);
+				op.reply <-= (dir(child(q)|big nrev<<32, revmtime(nrev)), nil);
 
 			Qtgz =>
 				name := reponame+"-";
@@ -416,16 +378,22 @@ again:
 					continue again;
 				}
 				revstr := op.name[len name:len op.name-len ".tgz"];
+				nrev: int;
 				err: string;
-				if(revstr == "latest")
-					(rev, err) = repo.lastrev();
-				else
-					(rev, err) = parserev(revstr);
+				if(revstr == "latest") {
+					(nrev, err) = repo.lastrev();
+				} else {
+					# look for branch-rev
+					(nil, brrev) := str->splitstrl(revstr, "-");
+					if(brrev != nil)
+						revstr = brrev[1:];
+					(nrev, err) = parserev(revstr);
+				}
 				if(err != nil) {
 					op.reply <-= (nil, styxservers->Enotfound);
 					continue again;
 				}
-				op.reply <-= (dir(child(q)|big rev<<32, revmtime(rev)), err);
+				op.reply <-= (dir(child(q)|big nrev<<32, revmtime(nrev)), err);
 
 			* =>
 				raise sprint("unhandled case in walk %q, from %d", op.name, q);
@@ -442,25 +410,65 @@ again:
 					have++;
 				}
 			Qfiles or Qlog or Qmanifest or Qtgz =>
-				if(op.offset == 0 && op.count > 0) {
-					(npath, mtime, err) := last(q);
-					if(err != nil) {
-						op.reply <-= (nil, err);
-						continue again;
+				# tip, branch tips, tags
+				b: list of ref Branch;
+				trev: int;
+				(t, err) := repo.tags();
+				if(err == nil)
+					(b, err) = repo.branches();
+				if(err == nil)
+					(trev, err) = repo.lastrev();
+				if(err != nil) {
+					op.reply <-= (nil, err);
+					continue again;
+				}
+				r := array[1+len b+len t] of (int, string, int);
+				i := 0;
+				Ttip, Tbranch, Ttag: con iota;
+				r[i++] = (Ttip, "tip", trev);
+				for(; b != nil; b = tl b)
+					r[i++] = (Tbranch, (hd b).name, (hd b).rev);
+				for(; t != nil; t = tl t)
+					r[i++] = (Ttag, (hd t).name, (hd t).rev);
+
+				s := op.offset;
+				if(s > len r)
+					s = len r;
+				e := s+op.count;
+				if(e > len r)
+					e = len r;
+				while(s < e) {
+					(typ, name, rrev) := r[s++];
+					mtime := revmtime(rrev);
+					d := dir(big child(q)|big rrev<<32, mtime);
+					case q {
+					Qfiles or
+					Qlog or
+					Qmanifest =>
+						d.name = name;
+						if(typ == Tbranch)
+							d.name = d.name+"-tip";
+					Qtgz =>
+						case typ {
+						Ttip =>
+							d.name = sprint("%s-%d.tgz", reponame, rrev);
+						Tbranch =>
+							d.name = sprint("%s-%s-%d.tgz", reponame, name, rrev);
+						Ttag =>
+							d.name = sprint("%s-%s.tgz", reponame, name);
+						}
 					}
-					d := dir(npath, mtime);
-					if(q == Qfiles || q == Qlog || q == Qmanifest)
-						d.name = "last";
 					op.reply <-= (d, nil);
 				}
 
-			Qrepofile =>
+			Qfilesrev =>
 				(r, err) := treeget(rev);
 				if(err != nil) {
 					op.reply <-= (nil, err);
 					continue again;
 				} else
-					r.readdir(gen, op);
+					if(!r.readdir(gen, op))
+						continue again;
 
 			* =>
 				raise sprint("unhandled case for readdir %d", q);
@@ -487,27 +495,10 @@ revmtime(rev: int): int
 }
 
 
-last(q: int): (big, int, string)
-{
-	(rev, err) := repo.lastrev();
-	if(err != nil)
-		return (big 0, 0, err);
-
-	nq: int;
-	case q {
-	Qfiles => 	nq = Qrepofile;
-	Qlog =>		nq = Qlogrev;
-	Qmanifest =>	nq = Qmanifestrev;
-	Qtgz =>		nq = Qtgzrev;
-	* =>		raise sprint("bogus call 'last' on q %d", q);
-	}
-	return (big nq|big rev<<32, revmtime(rev), nil);
-}
-
 child(q: int): big
 {
 	case q {
-	Qfiles =>	return big Qrepofile;
+	Qfiles =>	return big Qfilesrev;
 	Qlog =>		return big Qlogrev;
 	Qmanifest =>	return big Qmanifestrev;
 	Qtgz =>		return big Qtgzrev;
@@ -517,22 +508,22 @@ child(q: int): big
 
 parserev(s: string): (int, string)
 {
-	if(s == "0")
-		return (0, nil);
-	if(str->drop(s, "0-9") != "")
-		return (0, sprint("malformed revision (non-numeric str %q)", str->drop(s, "0-9")));
-	(rev, rem) := str->toint(s, 10);
-	if(rem != nil)
-		return (0, sprint("malformed revision (trailing str %q)", rem));
-	return (rev, nil);
+	if(s == "last")
+		return repo.lastrev();
+	if(suffix("-tip", s))
+		s = s[:len s-len "-tip"];
+	(rev, nil, err) := repo.lookup(s);
+	if(rev < 0 && err == nil)
+		err = "no such revision";
+	return (rev, err);
 }
 
 dir(path: big, mtime: int): ref Sys->Dir
 {
 	q := int path&16rff;
-	(rev, gen) := revgen(path);
+	(rev, nil) := revgen(path);
 	(nil, name, perm) := tab[q];
-	say(sprint("dir, path %bd, name %q, rev %d, gen %d", path, name, rev, gen));
+	#say(sprint("dir, path %bd, name %q, rev %d, gen %d", path, name, rev, gen));
 
 	d := ref sys->zerodir;
 	d.name = name;
@@ -548,7 +539,6 @@ dir(path: big, mtime: int): ref Sys->Dir
 		d.qid.qtype = Sys->QTFILE;
 	d.mtime = d.atime = mtime;
 	d.mode = perm;
-	say("dir, done");
 	return d;
 }
 
@@ -566,85 +556,66 @@ manifesttext(m: ref Manifest): string
 }
 
 
-Revcache: adt {
-	tab:	ref Table[ref Node];
-	size, max, gen:	int;
-
-	new:	fn(max: int): ref Revcache;
-	find:	fn(r: self ref Revcache, rev: int): ref Node;
-	add:	fn(r: self ref Revcache, rev: int, n: ref Node);
-};
-
-Revcache.new(max: int): ref Revcache
-{
-	t := Table[ref Node].new(32, nil);
-	return ref Revcache(t, 0, max, 0);
-}
-
-Revcache.find(r: self ref Revcache, rev: int): ref Node
-{
-	n := r.tab.find(rev);
-	if(n != nil) {
-		n.used = r.gen++;
-		say(sprint("revcache.find, rev %d, hit, %d bytes", rev, len n.data));
-	} else
-		say(sprint("revcache.find, rev %d, miss", rev));
-	return n;
-}
-
-# lru, should be done more efficiently
-purge(r: ref Revcache): int
-{
-	a := r.tab.items;
-	lastrev := -1;
-	lastn: ref Node;
-	for(i := 0; i < len a; i++)
-		for(l := a[i]; l != nil; l = tl l) {
-			(rev, n) := hd l;
-			if(lastrev == -1 || n.used < lastn.used) {
-				lastrev = rev;
-				lastn = n;
-			}
-		}
-	if(lastrev != -1) {
-		r.tab.del(lastrev);
-		return len lastn.data;
-	}
-	return 0;
-}
-
-Revcache.add(r: self ref Revcache, rev: int, n: ref Node)
-{
-	while(r.size+len n.data > r.max && r.size > 0)
-		r.size -= purge(r);
-	r.tab.add(rev, n);
-	r.size += len n.data;
-}
-
 changeget(rev: int): (array of byte, string)
 {
-	n := changetab.find(rev);
-	if(n == nil) {
-		(c, err) := repo.change(rev);
-		if(err != nil)
-			return (nil, err);
-		n = ref Node(c.nodeid, array of byte c.text(), changetab.gen++);
-		changetab.add(rev, n);
-	}
-	return (n.data, nil);
+	(c, err) := repo.change(rev);
+	if(err == nil)
+		d := array of byte c.text();
+	return (d, err);
 }
 
 manifestget(rev: int): (array of byte, string)
 {
-	n := manifesttab.find(rev);
-	if(n == nil) {
-		(nil, m, err) := repo.manifest(rev);
-		if(err != nil)
-			return (nil, err);
-		n = ref Node(m.nodeid, array of byte manifesttext(m), manifesttab.gen++);
-		manifesttab.add(rev, n);
+	(nil, m, err) := repo.manifest(rev);
+	if(err == nil)
+		d := array of byte manifesttext(m);
+	return (d, err);
+}
+
+fileread(r: ref Revtree, gen: int, n: int, off: big): (array of byte, string)
+{
+	if(srv.msize > 0 && n > srv.msize)
+		n = srv.msize;
+	(d, err) := r.pread(gen, n, off);
+	say(sprint("fileread, len %d, err %q", len d, err));
+	return (d, err);
+}
+
+
+revlogcleaner()
+{
+	for(;;) {
+		sys->sleep(120*1000);
+		<-revloglock;
+		cut := daytime->now()-Revlogtimeout;
+		for(i := len revlogtab-1; i >= 0; i--) {
+			(nil, nil, lastuse) := revlogtab[i];
+			if(lastuse <= cut)
+				revlogtab[i] = (nil, nil, 0);
+		}
+		revloglock <-= 1;
 	}
-	return (n.data, nil);
+}
+
+openrevlog(path: string): (ref Revlog, string)
+{
+	<-revloglock;
+	for(i := 0; i < len revlogtab; i++) {
+		(rlpath, rl, nil) := revlogtab[i];
+		if(rlpath == path) {
+			revlogtab[i].t2 = daytime->now();
+			revloglock <-= 1;
+			return (rl, nil);
+		}
+	}
+
+	(rl, err) := repo.openrevlog(path);
+	if(err == nil) {
+		revlogtab[1:] = revlogtab[:len revlogtab-1];
+		revlogtab[0] = (path, rl, daytime->now());
+	}
+	revloglock <-= 1;
+	return (rl, err);
 }
 
 # lru, should be done more efficiently
@@ -684,96 +655,65 @@ treeget(rev: int): (ref Revtree, string)
 	return (rt, nil);
 }
 
-# lru, inefficient..
-filepurge()
-{
-	a := filetab.items;
-	last: string;
-	node: ref Node;
-	used := -1;
-	for(i := 0; i < len a; i++)
-		for(l := a[i]; l != nil; l = tl l) {
-			(s, n) := hd l;
-			if(last == nil || n.used < used) {
-				last = s;
-				used = n.used;
-				node = n;
-			}
-		}
-	if(node != nil) {
-		filetab.del(last);
-		say(sprint("filepurge, removing %d/%d bytes from cache, node %s", len node.data, filecachesize, last));
-		filecachesize -= len node.data;
-		node.data = nil;
-	}
-}
-
-fileusegen := 0;
-fileget(r: ref Revtree, gen: int): (array of byte, string)
-{
-	d: array of byte;
-
-	f := r.plainfile(gen);
-	s := f.nodeid.text();
-	n := filetab.find(s);
-	if(n == nil) {
-		while(filecachesize >= filecachemax && filecachesize > 0)
-			filepurge();
-		err: string;
-		(d, err) = r.read(gen);
-		if(err != nil)
-			return (nil, err);
-		filecachesize += len d;
-		n = ref Node(f.nodeid, d, 0);
-		filetab.add(s, n);
-	} else
-		d = n.data;
-	n.used = fileusegen++;
-	return (d, nil);
-}
-
-Node: adt {
-	nodeid:	ref Nodeid;
-	data:	array of byte;
-	used:	int;
-};
 
 # file in a revtree
 File: adt {
-	gen:	int;
+	gen:	int;	# gen
+	pgen:	int;	# parent gen, for dotdot
 	path:	string;
+	name:	string;
 	mode:	int;
 	pick {
 	Plain =>
-		nodeid:	ref Nodeid;	# nil for directories
-		length:	int;	# -1 => not yet valid
-		mtime:	int;	# -1 => not yet valid
+		nodeid:	ref Nodeid;
+		rev:	int;	# -1 => not yet valid
+		length:	int;	# idem
+		mtime:	int;	# idem
 	Dir =>
-		files:	array of int;	# gens of files
+		files:	list of int;	# gens of children
 	}
 
-	new:	fn(gen: int, path: string, nodeid: ref Nodeid, flags: int): ref File;
+	new:	fn(gen, pgen: int, path: string, nodeid: ref Nodeid, flags: int): ref File;
+	getplain:	fn(f: self ref File): ref File.Plain;
+	getdir:	fn(f: self ref File): ref File.Dir;
 	text:	fn(f: self ref File): string;
 };
 
-File.new(gen: int, path: string, nodeid: ref Nodeid, flags: int): ref File
+File.new(gen, pgen: int, path: string, nodeid: ref Nodeid, flags: int): ref File
 {
-	if(nodeid == nil) {
-		return ref File.Dir(gen, path, 8r555|Sys->DMDIR, nil);
-	} else {
-		mode := 8r444;
-		if(flags & Mercurial->Flink)
-			mode |= 8r111;
-		return ref File.Plain(gen, path, mode, nodeid, -1, -1);
+	name := str->splitstrr(path, "/").t1;
+	if(nodeid == nil)
+		return ref File.Dir (gen, pgen, path, name, 8r555|Sys->DMDIR, nil);
+
+	mode := 8r444;
+	if(flags & Mercurial->Flink)
+		mode |= 8r111;
+	return ref File.Plain (gen, pgen, path, name, mode, nodeid, -1, -1, -1);
+}
+
+File.getplain(ff: self ref File): ref File.Plain
+{
+	pick f := ff {
+	Plain =>	return f;
 	}
+	raise "file not plain";
+}
+
+File.getdir(ff: self ref File): ref File.Dir
+{
+	pick f := ff {
+	Dir =>	return f;
+	}
+	raise "file not dir";
 }
 
 File.text(f: self ref File): string
 {
 	pick ff := f {
 	Plain =>
-		return sprint("<file.plain gen %d, path %q, nodeid %s, length %d, mtime %d>", f.gen, f.path, ff.nodeid.text(), ff.length, ff.mtime);
-	Dir =>	return sprint("<file.dir gen %d, path %q>", f.gen, f.path);
+		return sprint("<file.plain gen %d,%d, name %q, path %q, nodeid %s, rev %d, length %d, mtime %d>",
+			f.gen, f.pgen, f.name, f.path, ff.nodeid.text(), ff.rev, ff.length, ff.mtime);
+	Dir =>	return sprint("<file.dir gen %d,%d, name %q, path %q>", f.gen, f.pgen, f.name, f.path);
 	}
 }
 
@@ -786,140 +726,152 @@ Revtree: adt {
 	used:	int;
 
 	new:	fn(c: ref Change, mf: ref Manifest, rev: int): ref Revtree;
-	readdir:	fn(r: self ref Revtree, gen: int, op: ref Navop.Readdir);
-	read:	fn(r: self ref Revtree, gen: int): (array of byte, string);
+	readdir:	fn(r: self ref Revtree, gen: int, op: ref Navop.Readdir): int;
+	pread:	fn(r: self ref Revtree, gen: int, n: int, off: big): (array of byte, string);
 	stat:	fn(r: self ref Revtree, gen: int): (ref Sys->Dir, string);
 	walk:	fn(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string);
-	plainfile:	fn(r: self ref Revtree, gen: int): ref File.Plain;
-	dirfile:	fn(r: self ref Revtree, gen: int): ref File.Dir;
 };
 
-gendirs(prevdir: string, gen: int, path: string): (string, int, list of ref File)
+
+findgen(p: string, l: list of ref File): ref File.Dir
 {
-	(path, nil) = str->splitstrr(path, "/");
-	if(path == nil)
-		return (prevdir, gen, nil);
+	for(; l != nil; l = tl l)
+		if((hd l).path == p)
+			return (hd l).getdir();
+	return nil;
+}
 
-	if(path[len path-1] != '/')
-		raise "wuh?";
-	path = path[:len path-1];
-	if(str->prefix(path, prevdir))
-		return (prevdir, gen, nil);
+# add as directories:  the parent of path, then path itself
+# return the gen of path and an updated list of files
+dirgen(path: string, r: list of ref File): (ref File.Dir, list of ref File)
+{
+	pf := findgen(path, r);
+	if(pf != nil)
+		return (pf, r);  # already present
 
-	dirs: list of ref File;
-	s: string;
-	for(el := sys->tokenize(path, "/").t1; el != nil; el = tl el) {
-		s += "/"+hd el;
-		if(str->prefix(s[1:], prevdir))
-			continue;  # already present
-		dirs = File.new(gen++, s[1:], nil, 0)::dirs;
-	}
-
-	return (path, gen, dirs);
+	ppath := str->splitstrr(path, "/").t0;
+	if(ppath != nil)
+		ppath = ppath[:len ppath-1];
+	(pf, r) = dirgen(ppath, r);
+	f := File.new((hd r).gen+1, pf.gen, path, nil, 0);
+	pf.files = f.gen::pf.files;
+	r = f::r;
+	return (f.getdir(), r);
 }
 
 Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 {
 	say("revtree.new");
-	prevdir: string;  # previous dir we generated
 
-	gen := 0;
-	r := File.new(gen++, "", nil, 0)::nil;
+	# the file list is sorted and only contains files, not directories.
+	# the revtree does explicitly have directories,
+	# so before adding a file, we add directories that we haven't seen yet.
+
+	# root dir, special with its gen==pgen and name not from path
+	rf: ref File;
+	rf = ref File.Dir (0, 0, nil, string rev, 8r555|Sys->DMDIR, nil);
+	r := rf::nil;
+
 	for(l := mf.files; l != nil; l = tl l) {
 		m := hd l;
-		(nprevdir, ngen, dirs) := gendirs(prevdir, gen, m.path);
-		(prevdir, gen) = (nprevdir, ngen);
-		r = lists->concat(dirs, r);
-		r = File.new(gen++, m.path, m.nodeid, m.flags)::r;
+		dpath := str->splitstrr(m.path, "/").t0;
+		if(dpath != nil)
+			dpath = dpath[:len dpath-1];
+		pf: ref File.Dir;
+		(pf, r) = dirgen(dpath, r);
+
+		f := File.new((hd r).gen+1, pf.gen, m.path, m.nodeid, m.flags);
+		r = f::r;
+		pf.files = f.gen::pf.files;
 	}
 	rt := ref Revtree (rev, l2a(lists->reverse(r)), c.when+c.tzoff, 0);
+
 	say(sprint("revtree.new done, have %d paths:", len r));
 	for(i := 0; i < len rt.tree; i++)
 		say(sprint("\t%s", rt.tree[i].text()));
 	say("eol");
+
 	return rt;
 }
 
-dirfiles(r: ref Revtree, gen: int): array of int
+Revtree.readdir(r: self ref Revtree, gen: int, op: ref Navop.Readdir): int
 {
-	bf := r.tree[gen];
-	a := array[len r.tree-gen] of int; # max possible length
-	path := bf.path;
-	if(path != nil)
-		path = "/"+path;
-	have := 0;
-	prevelem: string;
-	for(i := gen; i < len r.tree; i++) {
-		p := "/"+r.tree[i].path;
-		say(sprint("checking %q against %q", path, p));
-		if(str->prefix(path+"/", p) && !has(p[len path+1:], '/')) {
-			elem := p[len path+1:];
-			if(elem != nil && elem != prevelem) {
-				say(sprint("adding gen %d", i));
-				a[have++] = i;
-				prevelem = elem;
-			}
-		}
-	}
-	a = a[:have];
-	say(sprint("dirfiles, have %d elems", len a));
-	return a;
-}
-
-Revtree.readdir(r: self ref Revtree, gen: int, op: ref Navop.Readdir)
-{
-	f := r.dirfile(gen);
+	f := r.tree[gen].getdir();
 	say(sprint("revtree.readdir, for %s", f.text()));
 
-	if(f.files == nil)
-		f.files = dirfiles(r, gen);
-
 	say(sprint("revtree.readdir, len files %d, op.count %d, op.offset %d", len f.files, op.count, op.offset));
-	for(i := op.offset; i-op.offset < op.count && i < len f.files; i++) {
-		(d, err) := r.stat(f.files[i]);
+	a := revinta(f.files);
+	s := op.offset;
+	if(s > len a)
+		s = len a;
+	e := len a;
+	if(e > s+op.count)
+		e = s+op.count;
+	while(s < e) {
+		(d, err) := r.stat(a[s++]);
 		op.reply <-= (d, err);
-		if(err != nil)
-			return say("revtree.readdir, stopped after error: "+err);
+		if(err != nil) {
+			say("revtree.readdir, stopped after error: "+err);
+			return 0;
+		}
 	}
-	say(sprint("revtree.readdir done, end i %d", i));
+	say(sprint("revtree.readdir done, end %d", e));
+	return 1;
+}
+
+revinta(l: list of int): array of int
+{
+	a := array[len l] of int;
+	i := len a-1;
+	for(; l != nil; l = tl l)
+		a[i--] = hd l;
+	return a;
 }
 
 Revtree.walk(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string)
 {
 	f := r.tree[gen];
 	say(sprint("revtree.walk, name %q, file %s", name, f.text()));
-	npath := f.path;
 	if(name == "..") {
-		if(gen == 0)
+		if(f.gen == 0)
 			return (dir(big Qfiles, starttime), nil);
-		(npath, nil) = str->splitstrr(f.path, "/");
-		if(npath != nil) {
-			if(!suffix("/", npath))
-				raise sprint("npath does not have / at end?, npath %q", npath);
-			npath = npath[:len npath-1];
-		}
-	} else {
-		if(npath != nil)
-			npath += "/";
-		npath += name;
+		return r.stat(f.pgen);
 	}
 
-	# xxx could be done more efficiently
-	for(i := 0; i < len r.tree; i++)
-		if(r.tree[i].path == npath)
-			return r.stat(i);
-	say(sprint("revtree.walk, no hit for %q in %q", npath, f.path));
+	pick ff := f {
+	Dir =>
+		for(l := ff.files; l != nil; l = tl l)
+			if(r.tree[hd l].name == name)
+				return r.stat(hd l);
+	}
+
+	say(sprint("revtree.walk, no hit for %q in %q", name, f.path));
 	return (nil, styxservers->Enotfound);
 }
 
-Revtree.read(r: self ref Revtree, gen: int): (array of byte, string)
+filerev(rl: ref Revlog, f: ref File.Plain): (int, string)
 {
-	f := r.plainfile(gen);
+	if(f.rev >= 0)
+		return (f.rev, nil);
+	(e, err) := rl.findnodeid(f.nodeid);
+	if(err == nil)
+		f.rev = e.rev;
+	return (f.rev, err);
+}
+
+Revtree.pread(r: self ref Revtree, gen: int, n: int, off: big): (array of byte, string)
+{
+	f := r.tree[gen].getplain();
 	say(sprint("revtree.read, f %s", f.text()));
-	(data, err) := repo.readfile(f.path, f.nodeid);
-	if(err == nil && f.length < 0)
-		f.length = len data;
-	return (data, err);
+
+	rev: int;
+	d: array of byte;
+	(rl, err) := openrevlog(f.path);
+	if(err == nil)
+		(rev, err) = filerev(rl, f);
+	if(err == nil)
+		(d, err) = rl.pread(rev, n, off);
+	return (d, err);
 }
 
 Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
@@ -927,35 +879,33 @@ Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
 	f := r.tree[gen];
 	say(sprint("revtree.stat, rev %d, file %s", r.rev, f.text()));
 
-	q := Qrepofile;
 	d := ref sys->zerodir;
-
-	if(gen == 0)
-		d.name = sprint("%d", r.rev);
-	else
-		d.name = str->splitstrr(f.path, "/").t1;
-
+	d.name = f.name;
 	d.uid = d.gid = "hg";
-	d.qid.path = big Qrepofile|big gen<<8|big r.rev<<32;
+	d.qid.path = big Qfilesrev|big gen<<8|big r.rev<<32;
 
 	pick ff := f {
 	Plain =>
 		d.qid.qtype = Sys->QTFILE;
 
 		if(ff.length < 0) {
-			(length, err) := repo.filelength(f.path, ff.nodeid);
+			rev: int;
+			(rl, err) := openrevlog(f.path);
+			if(err == nil)
+				(rev, err) = filerev(rl, ff);
+			if(err == nil)
+				(ff.mtime, err) = repo.mtime(rl, rev);
+			if(err != nil)
+				return (nil, "getting file mtime: "+err);
+
+			length: big;
+			(length, err) = rl.length(rev);
 			if(err != nil)
 				return (nil, err);
 			ff.length = int length;
 		}
-		d.length = big ff.length;
 
-		if(ff.mtime < 0) {
-			(mtime, err) := repo.filemtime(f.path, ff.nodeid);
-			if(err != nil)
-				return (nil, err);
-			ff.mtime = mtime;
-		}
+		d.length = big ff.length;
 		d.mtime = d.atime = ff.mtime;
 	Dir =>
 		d.qid.qtype = Sys->QTDIR;
@@ -968,21 +918,6 @@ Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
 	return (d, nil);
 }
 
-Revtree.plainfile(r: self ref Revtree, gen: int): ref File.Plain
-{
-	pick f := r.tree[gen] {
-	Plain =>	return f;
-	* =>	raise "file not plain file";
-	}
-}
-
-Revtree.dirfile(r: self ref Revtree, gen: int): ref File.Dir
-{
-	pick f := r.tree[gen] {
-	Dir =>	return f;
-	* =>	raise "file not directory";
-	}
-}
 
 
 Tgz: adt {
@@ -1033,66 +968,71 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 	if(!t.eof && len t.tgzdata == 0) {
 		# handle filter msgs until we find either result, finished, or error
 	next:
-		for(;;) {
-			pick m := (msg := <-t.rq) {
-			Fill =>
-				if(len t.data == 0) {
-					if(t.mf == nil) {
-						m.reply <-= 0;
-						continue next;
-					}
-
-					f := hd t.mf;
-					t.mf = tl t.mf;
-
-					say(sprint("tgz.read, starting on next file, %q", f.path));
-					data: array of byte;
-					(mtime, err) := repo.filemtime(f.path, f.nodeid);
-					if(err == nil)
-						(data, err) = repo.readfile(f.path, f.nodeid);
-					if(err != nil)
-						return (nil, err);
-
-					last := 0;
-					if(t.mf == nil)
-						last = 2*512;
-
-					hdr := tarhdr(t.dir+f.path, big len data, mtime);
-					pad := len data % 512;
-					if(pad != 0)
-						pad = 512-pad;
-					t.data = array[len hdr+len data+pad+last] of byte;
-					t.data[len t.data-(pad+last):] = array[pad+last] of {* => byte 0};
-					t.data[:] = hdr;
-					t.data[len hdr:] = data;
+		for(;;)
+		pick m := <-t.rq {
+		Fill =>
+			if(len t.data == 0) {
+				if(t.mf == nil) {
+					m.reply <-= 0;
+					continue next;
 				}
 
-				give := len m.buf;
-				if(len t.data < give)
-					give = len t.data;
-				m.buf[:] = t.data[:give];
-				t.data = t.data[give:];
-				m.reply <-= give;
+				f := hd t.mf;
+				t.mf = tl t.mf;
 
-			Result =>
-				t.tgzdata = array[len m.buf] of byte;
-				t.tgzdata[:] = m.buf;
-				m.reply <-= 1;
-				break next;
+				say(sprint("tgz.read, starting on next file, %q", f.path));
+				e: ref Entry;
+				mtime: int;
+				d: array of byte;
+				(rl, err) := openrevlog(f.path);
+				if(err == nil)
+					(e, err) = rl.findnodeid(f.nodeid);
+				if(err == nil)
+					(mtime, err) = repo.mtime(rl, e.rev);
+				if(err == nil)
+					(d, err) = rl.get(e.rev);
+				if(err != nil)
+					return (nil, err);
 
-			Finished =>
-				if(len m.buf != 0)
-					raise "deflate had leftover data...";
-				say("tgz.read, finished...");
-				t.eof = 1;
-				break next;
+				last := 0;
+				if(t.mf == nil)
+					last = 2*512;
 
-			Info =>
-				say("inflate info: "+m.msg);
-
-			Error =>
-				return (nil, m.e);
+				hdr := tarhdr(t.dir+f.path, big len d, mtime);
+				pad := len d % 512;
+				if(pad != 0)
+					pad = 512-pad;
+				t.data = array[len hdr+len d+pad+last] of byte;
+				t.data[len t.data-(pad+last):] = array[pad+last] of {* => byte 0};
+				t.data[:] = hdr;
+				t.data[len hdr:] = d;
 			}
+
+			give := len m.buf;
+			if(len t.data < give)
+				give = len t.data;
+			m.buf[:] = t.data[:give];
+			t.data = t.data[give:];
+			m.reply <-= give;
+
+		Result =>
+			t.tgzdata = array[len m.buf] of byte;
+			t.tgzdata[:] = m.buf;
+			m.reply <-= 1;
+			break next;
+
+		Finished =>
+			if(len m.buf != 0)
+				raise "deflate had leftover data...";
+			say("tgz.read, finished...");
+			t.eof = 1;
+			break next;
+
+		Info =>
+			say("inflate info: "+m.msg);
+
+		Error =>
+			return (nil, m.e);
 		}
 	}
 

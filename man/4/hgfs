@@ -1,19 +1,10 @@
 .TH hgfs 4
 .SH NAME
 hg/fs \- mount mercurial repository
-.SH synopsis
+.SH SYNOPSIS
 .B hg/fs
 [
 .B -Dd
-] [
-.B -C
-.I changecache
-] [
-.B -F
-.I filecache
-] [
-.B -M
-.I manifestcache
 ] [
 .B -T
 .I revcache
@@ -23,7 +14,7 @@ hg/fs \- mount mercurial repository
 ]
 .SH DESCRIPTION
 .B Hg/fs
-reads a mercurial repository and exports its contents over styx.  It allows walking to the files of any revision, read the commit (log) message or manifest for any revision, or read a .tgz snapshot of any revision.
+reads a mercurial repository and exports its contents over styx.  It allows walking to the files of any revision, read the commit (log) message or manifest for any revision, or read a .tgz snapshot of any revision.  Revisions are either numbers, (partial) ``nodeid''s, tags, branches (their tips) or the special name ``tip''.
 .SS Options
 .TP
 .B -D
@@ -34,31 +25,8 @@ Print debugging messages, a second
 .B -d
 prints more messages.
 .TP
-.BI -C " changecache"
-Set maximum size of cache for changes (files in
-.IR log/ )
-to
-.I changecache
-bytes.  The default is 24k.
-.TP
-.BI -F " filecache"
-As
-.B -C
-but for files in
-.IR files/ .
-The default is 512k.
-.TP
-.BI -M " manifestcache"
-As
-.B -C
-but for files in
-.IR manifest/ .
-The default is 8k.
-.TP
 .BI -T " revcache"
-As
-.B -C
-but for the internal data structure for a tree of files for a revision.
+Set maximum size of cache for the internal representation of a tree of files for a revision.
 .I Revcache
 is the maximum number of such structures, independent of size in bytes.
 The default is 64.
@@ -91,30 +59,47 @@ Read the manifest for revision
 .BI tgz/ reponame-n.tgz
 Read the .tgz for revision
 .IR n .
+As a special case, n can be ``latest''.  It has the same semantics as ``tip''.
+.TP
+.BI branches
+Read the branches.  One per line.  Each line has three space-separated
+fields:  nodeid, branch name, and tip revision of the branch.
+.TP
+.BI tags
+Read the branches.  One per line.  Each line has three space-separated
+fields:  nodeid, tag name, and revision of the tag.
 
 .PP
-For each path except
-.BR tgz/ ,
-.I n
-can be ``last'', which will be translated by
-.B hg/fs
-to the latest version at that moment.
-Listing the contents of
+Symbolic revisions (such as ``tip'') are evaluated to a revision number when the
+revision is walked to.  This means that a walk to ``tip'' and a
+subsequent commit to the repository will not update the open file.
+.PP
+For brevity, listing the contents of
 .BR files ", " log " and " manifest
-will return only return the filename ``last'', not all revision numbers.  They can be walked to though.  A
+will only list files with the names of tags, tips of branches (in the form ``branch-tip''),
+and ``tip'', not all revision numbers.  All revisions can be walked
+to though.
+A
 .IR stat (2)
-on
-.B */last
-will return the last revision number in the name.
+on these files will show the revision number as the name.
+.PP
 Listing the contents of
 .B tgz/
-returns a single file called
-.IR reponame-n.tgz ,
-where
+returns similar files:
+.IR reponame-branch-rev.tgz ,
+.IR reponame-tag.tgz ,
+and
+.IR reponame-rev.tgz (for
+the tip), where
 .I reponame
-is the directory name containing the repository and
-.I n
-is the latest revision (again, any revision can be read, it is just not listed).
+is the name of the repository (the name of the directory where
+.I hg/
+resides in),
+.I branch-rev
+the numeric revision of the tip of each branch, and
+.I tag
+as the name of each tag.
+Again, any revision can be read, it is just not listed).
 
 .SH SOURCE
 .B /appl/cmd/hg/fs.b

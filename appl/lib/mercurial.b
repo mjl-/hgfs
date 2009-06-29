@@ -129,11 +129,28 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 	l = getline(b);
 	if(l == nil)
 		return (nil, "missing timestamp");
+
+	extrastr: string;
 	(t, tzoff) := str->splitstrl(l, " ");
+	if(tzoff != nil)
+		(tzoff, extrastr) = str->splitstrl(tzoff[1:], " ");
 	if(tzoff == nil || str->drop(t, "0-9") != nil || str->drop(t, "0-9-") != nil)
 		return (nil, "invalid timestamp/timezone");
 	c.when = int t;
 	c.tzoff = int tzoff[1:];
+
+	if(extrastr != nil)
+		extrastr = extrastr[1:];
+	while(extrastr != nil) {
+		k, v: string;
+		(k, extrastr) = str->splitstrl(extrastr, ":");
+		if(extrastr == nil)
+			return (nil, sprint("bad extra, only key"));
+		(v, extrastr) = str->splitstrl(extrastr[1:], "\0");
+		if(extrastr != nil)
+			extrastr = extrastr[1:];
+		c.extra = (k, v)::c.extra;
+	}
 
 	for(;;) {
 		l = getline(b);
@@ -160,6 +177,14 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 	return (c, nil);
 }
 
+Change.findextra(c: self ref Change, k: string): (string, string)
+{
+	for(l := c.extra; l != nil; l = tl l)
+		if((hd l).t0 == k)
+			return hd l;
+	return (nil, nil);
+}
+
 Change.text(c: self ref Change): string
 {
 	s := "";
@@ -176,6 +201,9 @@ Change.text(c: self ref Change): string
 	s += sprint("committer: %s\n", c.who);
 	when := daytime->gmt(c.when);
 	when.tzoff = c.tzoff;
+	(nil, v) := c.findextra("branch");
+	if(v != nil)
+		s += sprint("branch: %q\n", v);
 	s += sprint("date: %s; %d %d\n", daytime->text(when), c.when, c.tzoff);
 	s += sprint("files changed:\n");
 	for(l := c.files; l != nil; l = tl l)
@@ -227,7 +255,7 @@ reopen(rl: ref Revlog): string
 	(ok, dir) := sys->fstat(rl.ifd);
 	if(ok < 0)
 		return sprint("%r");
-	if(dir.length == rl.length && dir.mtime == rl.mtime)
+	if(dir.length == rl.ilength && dir.mtime == rl.imtime)
 		return nil;
 
 say(sprint("revlog, reopen, path %q", rl.path));
@@ -245,6 +273,8 @@ say(sprint("revlog, reopen, path %q", rl.path));
 
 	rl.flags = g16(buf, 0).t0;
 	rl.version = g16(buf, 2).t0;
+	if(rl.version != Version1)
+		return sprint("revlog not version1 ('ng') but %d, not supported", rl.version);
 	rl.bd = nil;
 	rl.dfd = nil;
 	if(!isindexonly(rl)) {
@@ -257,8 +287,8 @@ say(sprint("revlog, reopen, path %q", rl.path));
 
 	err := readrevlog(rl, ib);
 	if(err == nil) {
-		rl.length = dir.length;
-		rl.mtime = dir.mtime;
+		rl.ilength = dir.length;
+		rl.imtime = dir.mtime;
 	}
 	return err;
 }
@@ -306,20 +336,21 @@ say(sprint("readrevlog, len ents %d", len rl.ents));
 }
 
 
-Revlog.open(path: string): (ref Revlog, string)
+Revlog.open(path: string, cacheall: int): (ref Revlog, string)
 {
 	say(sprint("revlog.open %q", path));
 	rl := ref Revlog;
 	rl.path = path;
 	rl.fullrev = -1;
+	rl.cacheall = cacheall;
 
 	# we keep ifd open at all times.  we'll need it if this revlog isindexonly and we need to read data parts.
 	rl.ifd = sys->open(path+".i", Sys->OREAD);
 	if(rl.ifd == nil)
 		return (nil, sprint("open %q: %r", path+".i"));
 
-	rl.length = ~big 0;
-	rl.mtime = ~0;
+	rl.ilength = ~big 0;
+	rl.imtime = ~0;
 	err := reopen(rl);
 	if(err != nil)
 		rl = nil;
@@ -413,6 +444,7 @@ getdata(rl: ref Revlog, e: ref Entry): (array of byte, string)
 		return (nil, err);
 	#say(sprint("getdata, %d decompressed bytes for rev %d", len buf, e.rev));
 
+	if(!rl.cacheall)
 	for(i := 0; rl.ncache >= Cachemax && i < len rl.cache; i++)
 		if(rl.cache[i] != nil) {
 			rl.cache[i] = nil;
@@ -445,11 +477,62 @@ getbufs(rl: ref Revlog, e: ref Entry): (array of array of byte, string)
 	return (bufs, err);
 }
 
+ismeta(d: array of byte): int
+{
+	return len d >= 2 && d[0] == byte 1 && d[1] == byte '\n';
+}
+
+line(d: array of byte, s, e: int): int
+{
+	while(s < e && d[s] != byte '\n')
+		s++;
+	return s;
+}
+
+getmeta(d: array of byte): list of (string, string)
+{
+	l: list of (string, string);
+	if(!ismeta(d))
+		return l;
+
+	s := 2;
+	e := 2;
+	while(!ismeta(d[e:]))
+		e++;
+	while(s < e) {
+		o := line(d, s, e);
+		(k, v) := str->splitstrl(string d[s:o], ": ");
+		if(v != nil)
+			v = v[2:];
+		s = o;
+		if(s < e && d[s] == byte '\n')
+			s++;
+		l = (k, v)::l;
+	}
+	return l;
+}
+
+dropmeta(d: array of byte): array of byte
+{
+	getmeta(d);
+	i := 0;
+	if(len d >= 2 && d[0] == byte 1 && d[1] == byte '\n') {
+		for(i = 2; i < len d; i++) {
+			if(d[i] == byte 1 && i+1 < len d && d[i+1] == byte '\n') {
+				i += 2;
+				break;
+			}
+		}
+	}
+	return d[i:];
+}
+
+# return the revision data, without meta-data
 get(rl: ref Revlog, e: ref Entry): (array of byte, string)
 {
 	if(e.rev == rl.fullrev) {
 		#say(sprint("get, using cache for rev %d", e.rev));
-		return (rl.full, nil);
+		return (dropmeta(rl.full), nil);
 	}
 
 	#say(sprint("get, going to reconstruct for rev %d", e.rev));
@@ -457,30 +540,38 @@ get(rl: ref Revlog, e: ref Entry): (array of byte, string)
 	(bufs, err) := getbufs(rl, e);
 	if(err == nil)
 		(buf, err) = reconstruct(rl, e, bufs[0], bufs[1:]);
+	if(err == nil)
+		buf = dropmeta(buf);
 	return (buf, err);
 }
 
 getlength(rl: ref Revlog, e: ref Entry): (big, string)
 {
-	if(e.rev == rl.fullrev)
-		return (big len rl.full, nil);
-
 	length := big -1;
-	(bufs, err) := getbufs(rl, e);
+	(d, err) := get(rl, e);
 	if(err == nil)
-		(length, err) = reconstructlength(bufs[0], bufs[1:]);
+		length = big len d;
 	return (length, err);
 }
 
-Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, ref Entry, string)
+Revlog.get(rl: self ref Revlog, rev: int): (array of byte, string)
 {
 	#say(sprint("revlog.get, rev %d, nodeid %s", rev, nodeid.text()));
 
 	d: array of byte;
-	(e, err) := rl.find(rev, nodeid);
+	(e, err) := rl.find(rev);
 	if(err == nil)
 		(d, err) = get(rl, e);
-	return (d, e, err);
+	return (d, err);
+}
+
+Revlog.getnodeid(rl: self ref Revlog, n: ref Nodeid): (array of byte, string)
+{
+	d: array of byte;
+	(e, err) := rl.findnodeid(n);
+	if(err == nil)
+		(d, err) = rl.get(e.rev);
+	return (d, err);
 }
 
 
@@ -493,7 +584,7 @@ Revlog.get(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, r
 Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
 {
 	#say(sprint("delta, prev %d, rev %d", prev, rev));
-	(e, err) := rl.findrev(rev);
+	(e, err) := rl.find(rev);
 	if(err != nil)
 		return (nil, err);
 
@@ -508,7 +599,7 @@ Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
 	obuflen := 0;
 	if(err == nil && prev >= 0) {
 		pe: ref Entry;
-		(pe, err) = rl.findrev(prev);
+		(pe, err) = rl.find(prev);
 		if(err == nil)
 			obuflen = pe.uncsize;
 	}
@@ -524,59 +615,38 @@ Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
 	return (delta, nil);
 }
 
-Revlog.filelength(rl: self ref Revlog, n: ref Nodeid): (big, string)
+Revlog.length(rl: self ref Revlog, rev: int): (big, string)
 {
-	length := big -1;
-	(e, err) := rl.findnodeid(n);
+	length: big;
+	err := reopen(rl);
 	if(err == nil)
-		(length, err) = getlength(rl, e);
+		(length, err) = getlength(rl, rl.ents[rev]);
 	return (length, err);
 }
 
-Revlog.getrev(rl: self ref Revlog, rev: int): (array of byte, string)
-{
-	(d, nil, err) := rl.get(rev, nil);
-	return (d, err);
-}
-
-Revlog.getnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string)
-{
-	(d, nil, err) := rl.get(-1, nodeid);
-	return (d, err);
-}
-
-Revlog.find(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string)
+Revlog.find(rl: self ref Revlog, rev: int): (ref Entry, string)
 {
 	err := reopen(rl);
 	if(err != nil)
 		return (nil, err);
 
 	# looking for last entry
-	if(rev < 0 && nodeid == nil)
+	# xxx is this really needed?
+	if(rev < 0)
 		return (rl.ents[len rl.ents-1], nil);
+	if(rev >= len rl.ents)
+		return (nil, sprint("unknown revision %d", rev));
+	return (rl.ents[rev], nil);
+}
 
-	# looking for revision number
-	if(rev >= 0) {
-		if(rev >= len rl.ents)
-			return (nil, sprint("no revision %d", rev));
-		return (rl.ents[rev], nil);
-	}
 
+Revlog.findnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string)
+{
 	# looking for nodeid
 	for(i := 0; i < len rl.ents; i++)
 		if(Nodeid.cmp(rl.ents[i].nodeid, nodeid) == 0)
 			return (rl.ents[i], nil);
 	return (nil, sprint("no nodeid %s", nodeid.text()));
-}
-
-Revlog.findrev(rl: self ref Revlog, rev: int): (ref Entry, string)
-{
-	return rl.find(rev, nil);
-}
-
-Revlog.findnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string)
-{
-	return rl.find(-1, nodeid);
 }
 
 Revlog.lastrev(rl: self ref Revlog): (int, string)
@@ -593,6 +663,19 @@ Revlog.entries(rl: self ref Revlog): (array of ref Entry, string)
 	ents := array[len rl.ents] of ref Entry;
 	ents[:] = rl.ents;
 	return (ents, nil);
+}
+
+Revlog.pread(rl: self ref Revlog, rev: int, n: int, off: big): (array of byte, string)
+{
+	(d, err) := rl.get(rev);
+	if(err == nil) {
+		if(off > big len d)
+			off = big len d;
+		if(off+big n > big len d)
+			n = int (big len d-off);
+		d = d[int off:int off+n];
+	}
+	return (d, err);
 }
 
 
@@ -697,7 +780,7 @@ Repo.storedir(r: self ref Repo): string
 Repo.openrevlog(r: self ref Repo, path: string): (ref Revlog, string)
 {
 	path = r.storedir()+"/data/"+r.escape(path);
-	return Revlog.open(path);
+	return Revlog.open(path, 0);
 }
 
 
@@ -705,42 +788,27 @@ Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
 {
 	say("repo.manifest");
 
-	(cl, clerr) := r.changelog();
-	if(clerr != nil)
-		return (nil, nil, clerr);
-	(cdata, ce, clderr) := cl.get(rev, nil);
-	if(clderr != nil)
-		return (nil, nil, clderr);
-
-	(c, cerr) := Change.parse(cdata, ce);
-	if(cerr != nil)
-		return (nil, nil, cerr);
-
-	say("repo.manifest, have change, manifest nodeid "+c.manifestnodeid.text());
-
-	(ml, mlerr) := r.manifestlog();
-	if(mlerr != nil)
-		return (nil, nil, mlerr);
-
-	(mdata, mderr) := ml.getnodeid(c.manifestnodeid);
-	if(mderr != nil)
-		return (nil, nil, mderr);
-
-	(m, merr) := Manifest.parse(mdata, c.manifestnodeid);
-	if(merr != nil)
-		return (nil, nil, merr);
-
-	return (c, m, nil);
-}
-
-Repo.readfile(r: self ref Repo, path: string, nodeid: ref Nodeid): (array of byte, string)
-{
-	say(sprint("repo.readfile, path %q, nodeid %s", path, nodeid.text()));
-	rlpath := r.storedir()+"/data/"+r.escape(path);
-	(rl, rlerr) := Revlog.open(rlpath);
-	if(rlerr != nil)
-		return (nil, rlerr);
-	return rl.getnodeid(nodeid);
+	cd: array of byte;
+	ce: ref Entry;
+	c: ref Change;
+	ml: ref Revlog;
+	md: array of byte;
+	m: ref Manifest;
+	
+	(cl, err) := r.changelog();
+	if(err == nil)
+		(ce, err) = cl.find(rev);
+	if(err == nil)
+		(cd, err) = cl.get(rev);
+	if(err == nil)
+		(c, err) = Change.parse(cd, ce);
+	if(err == nil)
+		(ml, err) = r.manifestlog();
+	if(err == nil)
+		(md, err) = ml.getnodeid(c.manifestnodeid);
+	if(err == nil)
+		(m, err) = Manifest.parse(md, c.manifestnodeid);
+	return (c, m, err);
 }
 
 Repo.lastrev(r: self ref Repo): (int, string)
@@ -766,33 +834,23 @@ Repo.lastrev(r: self ref Repo): (int, string)
 
 Repo.change(r: self ref Repo, rev: int): (ref Change, string)
 {
-	(cl, clerr) := r.changelog();
-	if(clerr != nil)
-		return (nil, clerr);
-
-	(cdata, e, clderr) := cl.get(rev, nil);
-	if(clderr != nil)
-		return (nil, clderr);
-
-	(c, cerr) := Change.parse(cdata, e);
-	return (c, cerr);
-}
-
-Repo.filelength(r: self ref Repo, path: string, n: ref Nodeid): (big, string)
-{
-	(rl, err) := r.openrevlog(path);
-	if(err != nil)
-		return (big -1, err);
-	return rl.filelength(n);
-}
-
-Repo.filemtime(r: self ref Repo, path: string, n: ref Nodeid): (int, string)
-{
-	e: ref Entry;
+	ce: ref Entry;
+	cd: array of byte;
 	c: ref Change;
-	(rl, err) := r.openrevlog(path);
+	(cl, err) := r.changelog();
 	if(err == nil)
-		(e, err) = rl.findnodeid(n);
+		(ce, err) = cl.find(rev);
+	if(err == nil)
+		(cd, err) = cl.get(rev);
+	if(err == nil)
+		(c, err) = Change.parse(cd, ce);
+	return (c, err);
+}
+
+Repo.mtime(r: self ref Repo, rl: ref Revlog, rev: int): (int, string)
+{
+	c: ref Change;
+	(e, err) := rl.find(rev);
 	if(err == nil)
 		(c, err) = r.change(e.link);
 	if(err != nil)
@@ -889,8 +947,23 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 	return (lists->reverse(l), nil);
 }
 
+branchupdate(l: list of ref Branch, branch: string, e: ref Entry): list of ref Branch
+{
+	for(t := l; t != nil; t = tl t) {
+		b := hd t;
+		if(b.name == branch) {
+			b.rev = e.rev;
+			b.n = e.nodeid;
+			return t;
+		}
+	}
+	t = ref Branch (branch, e.nodeid, e.rev)::t;
+	return t;
+}
+
 Repo.branches(r: self ref Repo): (list of ref Branch, string)
 {
+say("repo.branches");
 	path := r.path+"/branch.cache";
 	b := bufio->open(path, Bufio->OREAD);
 	# b nil is okay, we're sure not to read from it if so below
@@ -899,12 +972,11 @@ Repo.branches(r: self ref Repo): (list of ref Branch, string)
 	if(clerr != nil)
 		return (nil, "opening changelog, for revisions: "+clerr);
 
-	# first line has nodeid+revision of tip
-	if(b != nil)
-		b.gets('\n');
-
+	# first line has nodeid+revision of tip.  used for seeing if the cache is up to date.
 	l: list of ref Branch;
-	for(;;) {
+	i := 0;
+	lastcacherev := 0;
+	for(;; i++) {
 		if(b == nil)
 			break;
 
@@ -918,6 +990,11 @@ Repo.branches(r: self ref Repo): (list of ref Branch, string)
 		if(len toks != 2)
 			return (nil, sprint("wrong number of tokes in branch.cache: %s", s));
 
+		if(i == 0) {
+			lastcacherev = int hd tl toks;
+			continue;
+		}
+
 		name := hd tl toks;
 		e: ref Entry;
 		(n, err) := Nodeid.parse(hd toks);
@@ -927,8 +1004,34 @@ Repo.branches(r: self ref Repo): (list of ref Branch, string)
 			return (nil, err);
 		l = ref Branch (name, n, e.rev)::l;
 	}
+
+	# for missing branch entries, read the changelog
+	(lrev, err) := r.lastrev();
+	if(err != nil)
+		return (nil, err);
+	for(lastcacherev++; lastcacherev <= lrev; lastcacherev++) {
+		c: ref Change;
+		ce: ref Entry;
+		(c, err) = r.change(lastcacherev);
+		if(err != nil)
+			return (nil, err);
+		(nil, v) := c.findextra("branch");
+		say(sprint("branch in rev %d: %q", lastcacherev, v));
+		if(v != nil) {
+			(ce, err) = cl.find(lastcacherev);
+			if(err != nil)
+				return (nil, err);
+			l = branchupdate(l, v, ce);
+		}
+	}
+
+	# if no branches, fake one
 	if(l == nil && len cl.ents > 0) {
-		(e, err) := cl.find(-1, nil);
+		e: ref Entry;
+		rev: int;
+		(rev, err) = cl.lastrev();
+		if(err == nil)
+			(e, err) = cl.find(rev);
 		if(err != nil)
 			return (nil, err);
 		l = ref Branch ("default", e.nodeid, e.rev)::l;
@@ -965,7 +1068,7 @@ Repo.changelog(r: self ref Repo): (ref Revlog, string)
 {
 	if(r.cl == nil) {
 		path := r.storedir()+"/00changelog";
-		(cl, err) := Revlog.open(path);
+		(cl, err) := Revlog.open(path, 1);
 		if(err == nil)
 			r.cl = cl;
 	}
@@ -976,11 +1079,85 @@ Repo.manifestlog(r: self ref Repo): (ref Revlog, string)
 {
 	if(r.ml == nil) {
 		path := r.storedir()+"/00manifest";
-		(ml, err) := Revlog.open(path);
+		(ml, err) := Revlog.open(path, 1);
 		if(err == nil)
 			r.ml = ml;
 	}
 	return (r.ml, nil);
+}
+
+Repo.lookup(r: self ref Repo, s: string): (int, ref Nodeid, string)
+{
+	if(s == "null")
+		return (-1, nullnode, nil);
+
+	ents: array of ref Entry;
+	(cl, err) := r.changelog();
+	if(err == nil)
+		(ents, err) = cl.entries();
+	if(err != nil)
+		return (-1, nil, err);
+
+	if(s == "tip" || s == ".") {
+		e := ents[len ents-1];
+		return (e.rev, e.nodeid, nil);
+	}
+
+	# try as revision number
+	(rev, rem) := str->toint(s, 10);
+	if(rem == nil && s != nil) {
+		if(rev < 0) {
+			rev = len ents-1+rev;
+			if(rev < 0)
+				return (-1, nil, nil);
+		}
+		if(rev >= len ents)
+			return (-1, nil, nil);
+		return (rev, ents[rev].nodeid, nil);
+	}
+
+	# try exact nodeid match
+	if(len s == 40) {
+		n: ref Nodeid;
+		(n, err) = Nodeid.parse(s);
+		e: ref Entry;
+		if(err == nil)
+			(e, err) = cl.findnodeid(n);
+		if(err != nil)
+			return (-1, nil, err);
+		return (e.rev, e.nodeid, nil);
+	}
+
+	# try as nodeid
+	m: ref Entry;
+	for(i := 0; i < len ents; i++)
+		if(str->prefix(s, ents[i].nodeid.text())) {
+			if(m != nil)
+				return (-1, nil, nil); # ambiguous
+			m = ents[i];
+		}
+	if(m != nil)
+		return (m.rev, m.nodeid, nil);
+
+	# try as tag
+	l: list of ref Tag;
+	(l, err) = r.tags();
+	if(err != nil)
+		return (-1, nil, err);
+	for(; l != nil; l = tl l)
+		if((hd l).name == s)
+			return ((hd l).rev, (hd l).n, nil);
+
+	# try as branch
+	b: list of ref Branch;
+	(b, err) = r.branches();
+	if(err != nil)
+		return (-1, nil, err);
+	for(; b != nil; b = tl b)
+		if((hd b).name == s)
+			return ((hd b).rev, (hd b).n, nil);
+
+	return (-1, nil, nil);
 }
 
 

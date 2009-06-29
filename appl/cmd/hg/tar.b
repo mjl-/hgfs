@@ -69,25 +69,28 @@ init(nil: ref Draw->Context, args: list of string)
 	for(l := manifest.files; l != nil; l = tl l) {
 		file := hd l;
 		say(sprint("reading file %q, nodeid %s", file.path, file.nodeid.text()));
-		(data, derr) := repo.readfile(file.path, file.nodeid);
+		(rl, rlerr) := repo.openrevlog(file.path);
+		if(rlerr != nil)
+			fail(rlerr);
+		(d, derr) := rl.getnodeid(file.nodeid);
 		if(derr != nil)
 			fail(derr);
 		say("file read...");
-		say(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len data));
+		say(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len d));
 
 		# note: it seems we don't have to write directories
 
 		# write header.  512 bytes, has file name, mode, size, checksum, some more.
-		hdr := tarhdr(file.path, big len data, change.when+change.tzoff);
+		hdr := tarhdr(file.path, big len d, change.when+change.tzoff);
 		if(sys->write(sys->fildes(1), hdr, len hdr) != len hdr)
 			fail(sprint("writing header: %r"));
 
 		# and write the file
-		if(sys->write(sys->fildes(1), data, len data) != len data)
+		if(sys->write(sys->fildes(1), d, len d) != len d)
 			fail(sprint("writing: %r"));
 
 		# pad file with zero bytes to next 512-byte boundary
-		pad := array[512 - len data % 512] of {* => byte 0};
+		pad := array[512 - len d % 512] of {* => byte 0};
 		if(sys->write(sys->fildes(1), pad, len pad) != len pad)
 			fail(sprint("writing padding: %r"));
 	}

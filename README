@@ -23,6 +23,8 @@ you'll need need "web":
 
 	http://www.ueber.net/code/r/web
 
+and a separate "mk install" in appl/cmd/cgi/.
+
 
 # latest version
 
@@ -39,27 +41,16 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- cgi/websrv: calculate binary patches, instead of just sending a
-  fake patch overpatching the whole file with new data
 - cgi/websrv: test with various client versions
 - cgi/websrv: use hg/fs?  so we can use its repo/revlog cache.
 
-- hg/fs: improve bookkeeping for revtree:  don't store full path, and
-  keep track of gen of higher directory, for quick walk to ..
 - hg/fs: add another tree that lists .i(/.d) files.  reading them gives
   back revision numbers
-- hg/fs: add directories in .tgz's?  now only contains files.
-- hg/fs: use Revtree etc. for creating .tgz's?
-- hg/fs: show not only last revision in files/* etc, but tags&branches too?
-- hg/fs: make a plan to properly show tags&branches
-- hg/fs: make plan to deal with revisions-by-nodeid.  just revision
-  number is not good enough.
+- hg/fs: "default" in the listings is ugly.  it would make sense
+  to name "default-tip" just "tip", but that's confusing with standard
+  mercurial practice.  better solution?
 
-- library: make proper binary diffs.
-- library: function to resolve revision string to actual revision
-  (e.g. "tip", numeric, "null", tag, nodeid, etc).  should be used
-  at least by cmd lookup in websrv.
-- library: understand more revlog revision & flags in .i?
+- library: make proper binary diffs.  helps cgi/websrv.
 
 - use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
 - think about other tools such as pull & clone.

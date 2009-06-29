@@ -287,44 +287,13 @@ lookup()
 		return;
 	}
 	key := fields.get("key");
-
-	case key {
-	"null" =>
-		sys->print("0 %s\n", (hg->nullnode).text());
-	"." or
-	"tip" =>
-		rev: int;
-		e: ref Entry;
-		(cl, err) := repo.changelog();
-		if(err == nil)
-			(rev, err) = cl.lastrev();
-		if(err == nil)
-			(e, err) = cl.findrev(rev);
-		if(err != nil)
-			sys->print("0 error: %s\n", err);
-		else
-			sys->print("1 %s\n", e.nodeid.text());
-	* =>
-		if(len key == 40) {
-			(n, err) := Nodeid.parse(key);
-			if(err != nil)
-				sys->print("0 bad nodeid: %s\n", err);
-			else
-				sys->print("1 %s\n", n.text());
-			return;
-		}
-		(rev, rem) := str->toint(key, 10);
-		if(rem != nil) {
-			sys->print("0 unknown revision %#q\n", key);
-			return;
-		}
-
-		(c, err) := repo.change(rev);
-		if(err != nil)
-			sys->print("0 unknown revision '%d'\n", rev);
-		else
-			sys->print("1 %s\n", c.nodeid.text());
-	}
+	(nil, n, err) := repo.lookup(key);
+	if(err != nil)
+		sys->print("0 error: %s\n", err);
+	else if(n == nil)
+		sys->print("0 unknown revision %#q\n", key);
+	else
+		sys->print("1 %s\n", n.text());
 }
 
 nodes(l: list of string): array of ref Nodeid

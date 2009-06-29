@@ -24,10 +24,12 @@ Mercurial: module {
 		manifestnodeid:	ref Nodeid;
 		who:	string;
 		when, tzoff:	int;
+		extra:	list of (string, string);
 		files:	list of string;
 		msg:	string;
 
 		parse:	fn(data: array of byte, e: ref Entry): (ref Change, string);
+		findextra:	fn(c: self ref Change, k: string): (string, string);
 		text:	fn(c: self ref Change): string;
 	};
 
@@ -96,7 +98,8 @@ Mercurial: module {
 	};
 
 	# Revlog.flags
-	Indexonly: con 1<<iota;
+	Indexonly:	con 1<<iota;
+	Version0, Version1:	con iota;
 
 	Revlog: adt {
 		path:	string;
@@ -107,27 +110,32 @@ Mercurial: module {
 		flags:	int;
 		ents:	array of ref Entry;
 
+		# cache of decompressed revisions (delta's).
+		# cacheall caches all of them, for changelog & manifest.
 		cache:	array of array of byte;
 		ncache:	int;
+		cacheall:	int;
 
+		# cached last fully reconstructed revision, fullrev -1 means invalid
 		full:	array of byte;
 		fullrev:int;
 
-		length:	big;
-		mtime:	int;
+		# .i time & length of latest reread, for determining freshness
+		ilength:	big;
+		imtime:	int;
 
-		open:		fn(path: string): (ref Revlog, string);
-		isindexonly:	fn(rl: self ref Revlog): int;
-		get:		fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (array of byte, ref Entry, string);
-		getrev:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
-		getnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (array of byte, string);
+		open:		fn(path: string, cacheall: int): (ref Revlog, string);
+		get:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
+		getnodeid:	fn(rl: self ref Revlog, n: ref Nodeid): (array of byte, string);
 		lastrev:	fn(rl: self ref Revlog): (int, string);
-		find:		fn(rl: self ref Revlog, rev: int, nodeid: ref Nodeid): (ref Entry, string);
+		find:		fn(rl: self ref Revlog, rev: int): (ref Entry, string);
 		findnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string);
-		findrev:	fn(rl: self ref Revlog, rev: int): (ref Entry, string);
-		filelength:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (big, string);
-		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
 		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
+		pread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): (array of byte, string);
+		length:		fn(rl: self ref Revlog, rev: int): (big, string);
+
+		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
+		isindexonly:	fn(rl: self ref Revlog): int;
 	};
 
 	Repo: adt {
@@ -137,23 +145,18 @@ Mercurial: module {
 		lastrevision:	int;
 		lastmtime:	int;
 
-		cl:		ref Revlog;  # cached
+		# cached
+		cl:		ref Revlog;
 		ml:		ref Revlog;
 
 		open:		fn(path: string): (ref Repo, string);
 		find:		fn(path: string): (ref Repo, string);
 		name:		fn(r: self ref Repo): string;
-		isstore:	fn(r: self ref Repo): int;
-		isrevlogv1:	fn(r: self ref Repo): int;
-		escape:		fn(r: self ref Repo, path: string): string;
-		storedir:	fn(r: self ref Repo): string;
 		openrevlog:	fn(r: self ref Repo, path: string): (ref Revlog, string);
 		manifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest, string);
-		readfile:	fn(r: self ref Repo, path: string, n: ref Nodeid): (array of byte, string);
 		lastrev:	fn(r: self ref Repo): (int, string);
 		change:		fn(r: self ref Repo, rev: int): (ref Change, string);
-		filelength:	fn(r: self ref Repo, path: string, n: ref Nodeid): (big, string);
-		filemtime:	fn(r: self ref Repo, path: string, n: ref Nodeid): (int, string);
+		mtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): (int, string);
 		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
 		workroot:	fn(r: self ref Repo): string;
 		tags:		fn(r: self ref Repo): (list of ref Tag, string);
@@ -161,6 +164,12 @@ Mercurial: module {
 		heads:		fn(r: self ref Repo): (array of ref Entry, string);
 		changelog:	fn(r: self ref Repo): (ref Revlog, string);
 		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
+		lookup:		fn(r: self ref Repo, rev: string): (int, ref Nodeid, string);
+
+		escape:		fn(r: self ref Repo, path: string): string;
+		storedir:	fn(r: self ref Repo): string;
+		isstore:	fn(r: self ref Repo): int;
+		isrevlogv1:	fn(r: self ref Repo): int;
 	};
 
 

@@ -69,16 +69,19 @@ init(nil: ref Draw->Context, args: list of string)
 	for(l := manifest.files; l != nil; l = tl l) {
 		file := hd l;
 		say(sprint("reading file %q, nodeid %s", file.path, file.nodeid.text()));
-		(data, derr) := repo.readfile(file.path, file.nodeid);
+		(rl, rlerr) := repo.openrevlog(file.path);
+		if(rlerr != nil)
+			fail(rlerr);
+		(d, derr) := rl.getnodeid(file.nodeid);
 		if(derr != nil)
 			fail(derr);
 		say("file read...");
-		warn(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len data));
+		warn(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len d));
 
 		(fd, err) := createfile(file.path);
 		if(fd == nil)
 			fail(sprint("creating %q: %s", file.path, err));
-		if(sys->write(fd, data, len data) != len data)
+		if(sys->write(fd, d, len d) != len d)
 			fail(sprint("writing: %r"));
 	}
 }

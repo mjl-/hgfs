@@ -40,7 +40,7 @@ init(nil: ref Draw->Context, args: list of string)
 		arg->usage();
 	path := hd args;
 
-	(rl, err) := Revlog.open(path);
+	(rl, err) := Revlog.open(path, 0);
 	if(err != nil)
 		fail(err);
 
@@ -51,7 +51,7 @@ init(nil: ref Draw->Context, args: list of string)
 
 	e: ref Entry;
 	for(i := 0; i <= last; i++) {
-		(e, err) = rl.findrev(i);
+		(e, err) = rl.find(i);
 		if(err != nil)
 			fail(err);
 		#sys->print("entry %d:\n", i);
