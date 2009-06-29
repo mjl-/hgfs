@@ -4,57 +4,42 @@ hg/websrv \- serve mercurial http pull protocol
 .SH SYNOPSIS
 .B hg/websrv
 [
-.B -a
-.I repodir
-] [
 .B -d
-] [
-.B -h
-.I path
 ]
-.I querystring
+.I root
+[
+.I repo1 ...
+]
 .SH DESCRIPTION
 .B Websrv
 serves the mercurial pull protocol over http.  This protocol helps
 pull updates from a remote mercurial repository quickly and in a
 bandwidth-efficient manner.
-The mercurial repository in the working directory is served.  This
-behaviour can be changed with the options.
+The mercurial repositories in
+.I root
+are served.  This is typically
+.I /n/hg
+containing one or more mounted hg/fs'es.
+If no explicit repositories to allow are specified, all repositories are allowed.
 .PP
 Options:
-.TP
-.BI -a " repodir"
-Treat
-.I repodir
-as a directory that contains repositories and use the last path
-element from the environment's variable
-.I PATH_INFO
-as the repository directory.  This makes it easy to serve many
-mercurial repositories.
-.TP
-.BI -h " path"
-Use
-.I path
-as the repository.
 .TP
 .B -d
 Print debugging information.
 .PP
-Note that
-.B -a
-and
-.B -h
-are conflicting options.
 .SH EXAMPLES
-Start a httpd to serve the repository in the current directory:
+Start a httpd to serve the repositories in
+.IR /n/hg .
 
 .EX
-	httpd -c / {hg/websrv -d} GET .
+	httpd -c / {hg/websrv -d /n/hg} GET .
 .EE
 .SH SOURCE
 .B /appl/cmd/cgi/websrv.b
 .br
 .B /appl/lib/mercurial.b
+.br
+.B /appl/lib/mercurialwire.b
 .SH SEE ALSO
 .IR hgfs (4)
 .SH BUGS

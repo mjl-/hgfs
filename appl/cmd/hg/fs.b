@@ -27,13 +27,15 @@ include "tables.m";
 include "lists.m";
 	lists: Lists;
 include "mercurial.m";
-	mercurial: Mercurial;
-	Branch, Tag, Revlog, Repo, Entry, Nodeid, Change, Manifest, Manifestfile: import mercurial;
+	hg: Mercurial;
+	Branch, Tag, Revlog, Repo, Entry, Nodeid, Change, Manifest, Manifestfile: import hg;
+include "../../lib/mercurialwire.m";
+	hgwire: Mercurialwire;
 
 
 dflag: int;
 
-Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtags, Qbranches, Qtgz, Qstate, Qfilesrev, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
+Qroot, Qlastrev, Qfiles, Qlog, Qmanifest, Qtags, Qbranches, Qtgz, Qstate, Qwire, Qfilesrev, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
 tab := array[] of {
 	(Qroot,		"<reponame>",	Sys->DMDIR|8r555),
 	(Qlastrev,	"lastrev",	8r444),
@@ -44,6 +46,7 @@ tab := array[] of {
 	(Qbranches,	"branches",	8r444),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
 	(Qstate,	"state",	8r444),
+	(Qwire,		"wire",		8r666),
 	(Qfilesrev,	"<filesrev>",	Sys->DMDIR|8r555),
 	(Qlogrev,	"<logrev>",	8r444),
 	(Qmanifestrev,	"<manifestrev>",	8r444),
@@ -67,6 +70,8 @@ starttime: int;
 
 tgztab: ref Table[ref Tgz];
 
+wiretab: ref Table[ref Sys->FD];
+
 revtreetab: ref Table[ref Revtree];
 revtreesize := 0;
 revtreemax := 64;
@@ -75,6 +80,7 @@ revloglock: chan of int;
 revlogmax: con 16;
 revlogtab := array[revlogmax] of (string, ref Revlog, int);  # path, revlog, lastuse
 Revlogtimeout: con 5*60;  # time after last use that cached revlog is scheduled for remove
+
 
 HgFs: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -95,8 +101,10 @@ init(nil: ref Draw->Context, args: list of string)
 	deflate->init();
 	tables = load Tables Tables->PATH;
 	lists = load Lists Lists->PATH;
-	mercurial = load Mercurial Mercurial->PATH;
-	mercurial->init();
+	hg = load Mercurial Mercurial->PATH;
+	hg->init();
+	hgwire = load Mercurialwire Mercurialwire->PATH;
+	hgwire->init();
 
 	hgpath := "";
 
@@ -110,7 +118,7 @@ init(nil: ref Draw->Context, args: list of string)
 		'T' =>	revtreemax = int arg->earg();
 		'd' =>	dflag++;
 			if(dflag > 1)
-				mercurial->debug++;
+				hg->debug++;
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
 		}
@@ -133,6 +141,8 @@ init(nil: ref Draw->Context, args: list of string)
 	tab[Qroot].t1 = reponame;
 	tgztab = tgztab.new(32, nil);
 	revtreetab = revtreetab.new(1+revtreemax/16, nil);
+
+	wiretab = wiretab.new(32, nil);
 
 	navch := chan of ref Navop;
 	spawn navigator(navch);
@@ -162,9 +172,85 @@ done:
 	killgrp(sys->pctl(0, nil));
 }
 
+wirefidstr(m: ref Tmsg.Write, t: (string, string))
+{
+	p := array[2] of ref Sys->FD;
+	(s, err) := t;
+	if(err == nil && sys->pipe(p) < 0)
+		err = sprint("pipe: %r");
+	# data will be small and easily fit in the pipe buffer,
+	# thus this write won't block even though we don't have a reader yet
+	if(err == nil && sys->write(p[0], d := array of byte s, len d) != len d)
+		err = sprint("pipe write: %r");
+	wirefidfd(m, (p[1], err));
+}
+
+wirefidfd(m: ref Tmsg.Write, t: (ref Sys->FD, string))
+{
+	(fd, err) := t;
+	if(err != nil)
+		return replyerror(m, err);
+	wiretab.add(m.fid, fd);
+	srv.reply(ref Rmsg.Write (m.tag, len m.data));
+}
+
+wireargs(s: string, keys: list of string): (list of string, string)
+{
+	v: list of string;
+	while(s != nil) {
+		l: string;
+		(l, s) = str->splitstrl(s, "\n");
+		if(s != nil)
+			s = s[1:];
+		v = l::v;
+	}
+	if(len keys != len v)
+		return (nil, sprint("wrong number of arguments, want %d, got %d", len keys, len v));
+	return (lists->reverse(v), nil);
+}
+
 dostyx(gm: ref Tmsg)
 {
 	pick m := gm {
+	Write =>
+		# write on Qwire sets the new command.  we spawn a prog that writes the output to a pipe.
+		# each next styx read will take data from the pipe.
+		f := srv.getfid(m.fid);
+		q := int f.path&16rff;
+		if(q != Qwire) {
+			srv.default(m);
+			return;
+		}
+		s := string m.data;
+		cmd: string;
+		(cmd, s) = str->splitstrl(s, "\n");
+		if(s != nil)
+			s = s[1:];
+		say(sprint("write wire, cmd %q, s %q", cmd, s));
+		keys: list of string;
+		case cmd {
+		"branches"	=> keys = "nodes"::nil;
+		"between"	=> keys = "pairs"::nil;
+		"lookup"	=> keys = "key"::nil;
+		"changegroup"	=> keys = "roots"::nil;
+		"changegroupsubset"	=> keys = "bases"::"heads"::nil;
+		}
+
+		(args, err) := wireargs(s, keys);
+		if(err != nil)
+			return replyerror(m, err);
+		case cmd {
+		"capabilities"	=> wirefidstr(m, ("lookup changegroupsubset", nil));
+		"heads"		=> wirefidstr(m, hgwire->heads(repo));
+		"branches"	=> wirefidstr(m, hgwire->branches(repo, hd args));
+		"between"	=> wirefidstr(m, hgwire->between(repo, hd args));
+		"lookup"	=> wirefidstr(m, hgwire->lookup(repo, hd args));
+		"changegroup"	=> wirefidfd(m, hgwire->changegroup(repo, hd args));
+		"changegroupsubset"	=> wirefidfd(m, hgwire->changegroupsubset(repo, hd args, hd tl args));
+		* =>	return replyerror(m, sprint("unknown command %#q", cmd));
+		}
+		say("qwire write done");
+		
 	Read =>
 		f := srv.getfid(m.fid);
 		if(f.qtype & Sys->QTDIR) {
@@ -270,6 +356,16 @@ dostyx(gm: ref Tmsg)
 
 			srv.reply(styxservers->readstr(m, s));
 
+		Qwire =>
+			fd := wiretab.find(f.fid);
+			if(fd == nil)
+				return replyerror(m, "no command");
+			buf := array[m.count] of byte;
+			n := sys->read(fd, buf, len buf);
+			if(n < 0)
+				return replyerror(m, sprint("read: %r"));
+			srv.reply(ref Rmsg.Read (m.tag, buf[:n]));
+
 		* =>
 			replyerror(m, styxservers->Eperm);
 		}
@@ -281,6 +377,8 @@ dostyx(gm: ref Tmsg)
 		case q {
 		Qtgzrev =>
 			tgztab.del(f.fid);
+		Qwire =>
+			wiretab.del(f.fid);
 		}
 		srv.default(gm);
 
@@ -341,7 +439,7 @@ again:
 
 			case q {
 			Qroot =>
-				for(i := Qlastrev; i <= Qstate; i++)
+				for(i := Qlastrev; i <= Qwire; i++)
 					if(tab[i].t1 == op.name) {
 						op.reply <-= (dir(big tab[i].t0, starttime), nil);
 						continue again;

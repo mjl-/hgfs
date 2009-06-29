@@ -2,8 +2,10 @@
 
 TARG=\
 	mercurial.dis\
+	mercurialwire.dis\
 
 MODULES=\
+	mercurialwire.m\
 
 SYSMODULES=\
 	mercurial.m\

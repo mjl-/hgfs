@@ -42,7 +42,8 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 # todo
 
 - cgi/websrv: test with various client versions
-- cgi/websrv: use hg/fs?  so we can use its repo/revlog cache.
+- cgi/websrv: replace with a shell script.
+- cgi/websrv: fix problem with cloning hgfs (r43)
 
 - hg/fs: add another tree that lists .i(/.d) files.  reading them gives
   back revision numbers
