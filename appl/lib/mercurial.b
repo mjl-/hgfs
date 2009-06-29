@@ -189,7 +189,7 @@ Change.findextra(c: self ref Change, k: string): (string, string)
 Change.text(c: self ref Change): string
 {
 	s := "";
-	s += sprint("revision: %d\n", c.rev);
+	s += sprint("revision: %d %s\n", c.rev, c.nodeid.text());
 	pstr := "";
 	if(c.p1 == -1 && c.p2 == -1)
 		pstr = "  none";
