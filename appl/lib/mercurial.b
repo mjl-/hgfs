@@ -646,6 +646,9 @@ Revlog.find(rl: self ref Revlog, rev: int): (ref Entry, string)
 
 Revlog.findnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string)
 {
+	err := reopen(rl);
+	if(err != nil)
+		return (nil, err);
 	# looking for nodeid
 	for(i := 0; i < len rl.ents; i++)
 		if(Nodeid.cmp(rl.ents[i].nodeid, nodeid) == 0)
