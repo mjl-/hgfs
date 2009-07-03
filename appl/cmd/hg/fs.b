@@ -892,10 +892,12 @@ Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 	}
 	rt := ref Revtree (rev, l2a(lists->reverse(r)), c.when+c.tzoff, 0);
 
-	say(sprint("revtree.new done, have %d paths:", len r));
-	for(i := 0; i < len rt.tree; i++)
-		say(sprint("\t%s", rt.tree[i].text()));
-	say("eol");
+	if(dflag) {
+		say(sprint("revtree.new done, have %d paths:", len r));
+		for(i := 0; i < len rt.tree; i++)
+			say(sprint("\t%s", rt.tree[i].text()));
+		say("eol");
+	}
 
 	return rt;
 }
@@ -903,7 +905,7 @@ Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 Revtree.readdir(r: self ref Revtree, gen: int, op: ref Navop.Readdir): int
 {
 	f := r.tree[gen].getdir();
-	say(sprint("revtree.readdir, for %s", f.text()));
+	if(dflag)say(sprint("revtree.readdir, for %s", f.text()));
 
 	say(sprint("revtree.readdir, len files %d, op.count %d, op.offset %d", len f.files, op.count, op.offset));
 	a := revinta(f.files);
@@ -937,7 +939,7 @@ revinta(l: list of int): array of int
 Revtree.walk(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string)
 {
 	f := r.tree[gen];
-	say(sprint("revtree.walk, name %q, file %s", name, f.text()));
+	if(dflag)say(sprint("revtree.walk, name %q, file %s", name, f.text()));
 	if(name == "..") {
 		if(f.gen == 0)
 			return (dir(big Qfiles, starttime), nil);
@@ -968,7 +970,7 @@ filerev(rl: ref Revlog, f: ref File.Plain): (int, string)
 Revtree.pread(r: self ref Revtree, gen: int, n: int, off: big): (array of byte, string)
 {
 	f := r.tree[gen].getplain();
-	say(sprint("revtree.read, f %s", f.text()));
+	if(dflag)say(sprint("revtree.read, f %s", f.text()));
 
 	rev: int;
 	d: array of byte;
@@ -983,7 +985,7 @@ Revtree.pread(r: self ref Revtree, gen: int, n: int, off: big): (array of byte, 
 Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
 {
 	f := r.tree[gen];
-	say(sprint("revtree.stat, rev %d, file %s", r.rev, f.text()));
+	if(dflag)say(sprint("revtree.stat, rev %d, file %s", r.rev, f.text()));
 
 	d := ref sys->zerodir;
 	d.name = f.name;

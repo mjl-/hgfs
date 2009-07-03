@@ -50,7 +50,31 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
   to name "default-tip" just "tip", but that's confusing with standard
   mercurial practice.  better solution?
 
+- cgi/websrv+hgwire: fix bug that prevents complete inferno-os clone
 - library: make proper binary diffs.  helps cgi/websrv.
+
+more cpu & memory efficient:
+- currently a big repository uses too much memory and is slow.  e.g.
+  the inferno-os hg tree.  the manifest uses lots of memory.  perhaps
+  hg/fs shouldn't create a Revtree in memory, but fulfil readdirs/walks
+  from the manifest file on the fly.  i think the paths in the
+  manifest are sorted.  so we can do a binary search for the current
+  path.  then it's a matter of returning a proper qid.  with current
+  gens (increase with each path), we would need to do some trick
+  (some offsets with known gens) to start counting from.
+- for cpu usage, perhaps we need a binary tree lookup of nodeid -> rev?
+- prevent string formatting for debug messages in often-run code.
+- handle nodeid's as strings directly?  prevents lots of needless
+  conversion to byte arrays, doesn't need a special comparison
+  function (string compare in dis vm is probably faster), it's
+  simply easier, and it doesn't take more memory either as it's ascii-only.
+- perhaps we should cache Group's for revlog's?  seems more useful
+  than storing raw delta's.  does require one base in memory...
+- findgen in hg/fs currently uses lots of cpu.  make more efficient.
+- see how memory usage of list of int vs array of int compare.
+  might be part of the high mem usage for hgfs File's.
+- do we keep Manifest & Manifestfile in memory?  perhaps we can do
+  without and save memory.
 
 - use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
 - think about other tools such as pull & clone.

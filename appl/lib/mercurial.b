@@ -42,15 +42,12 @@ init()
 
 Nodeid.parse(s: string): (ref Nodeid, string)
 {
-	{
-		d := unhex(s);
-		if(len d != 20)
-			return (nil, sprint("bad nodeid: %s", s));
-		return (ref Nodeid (d), nil);
-	} exception ex {
-	"unhex:*" =>
-		return (nil, "bad nodeid: "+ex[len "unhex:":]);
-	}
+	(d, err) := unhex(s);
+	if(err != nil)
+		return (nil, err);
+	if(len d != 20)
+		return (nil, sprint("bad nodeid: %s", s));
+	return (ref Nodeid (d), nil);
 }
 
 Nodeid.create(d: array of byte, n1, n2: ref Nodeid): ref Nodeid
@@ -120,7 +117,10 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 	l := getline(b);
 	if(l == nil)
 		return (nil, "missing manifest nodeid");
-	c.manifestnodeid = ref Nodeid(unhex(l));
+	(nbuf, err) := unhex(l);
+	if(err != nil)
+		return (nil, err);
+	c.manifestnodeid = ref Nodeid(nbuf);
 
 	l = getline(b);
 	if(l == nil)
@@ -243,7 +243,10 @@ Manifest.parse(d: array of byte, n: ref Nodeid): (ref Manifest, string)
 			#say(sprint("manifest flags=%x", flags));
 		}
 		# say(sprint("nodeid=%q path=%q", string nodeid, string path));
-		mf := ref Manifestfile(string path, 0, ref Nodeid(unhex(string nodeid)), flags);
+		(nbuf, err) := unhex(string nodeid);
+		if(err != nil)
+			return (nil, err);
+		mf := ref Manifestfile(string path, 0, ref Nodeid(nbuf), flags);
 		files = mf::files;
 	}
 	files = lists->reverse(files);
@@ -1075,7 +1078,7 @@ Repo.changelog(r: self ref Repo): (ref Revlog, string)
 {
 	if(r.cl == nil) {
 		path := r.storedir()+"/00changelog";
-		(cl, err) := Revlog.open(path, 1);
+		(cl, err) := Revlog.open(path, 0);
 		if(err == nil)
 			r.cl = cl;
 	}
@@ -1086,7 +1089,7 @@ Repo.manifestlog(r: self ref Repo): (ref Revlog, string)
 {
 	if(r.ml == nil) {
 		path := r.storedir()+"/00manifest";
-		(ml, err) := Revlog.open(path, 1);
+		(ml, err) := Revlog.open(path, 0);
 		if(err == nil)
 			r.ml = ml;
 	}
@@ -1466,30 +1469,58 @@ flatten(total: int, l: list of array of byte): array of byte
 	return d;
 }
 
-unhex(s: string): array of byte
+unhexchar(c: int): byte
+{
+	case c {
+	'0' to '9' =>	return byte (c-'0');
+	'a' to 'f' =>	return byte (c-'a'+10);
+	'A' to 'F' =>	return byte (c-'A'+10);
+	}
+	raise "unhexchar:not hex char";
+}
+
+unhex(s: string): (array of byte, string)
 {
 	if(len s % 2 != 0)
-		raise "unhex:bogus hex string";
+		return (nil, "bogus hex string");
 
 	d := array[len s/2] of byte;
-	for(i := 0; i < len d; i++) {
-		(num, rem) := str->toint(s[i*2:(i+1)*2], 16);
-		if(rem != nil)
-			raise "unhex:bad hex string";
-		d[i] = byte num;
+	i := 0;
+	o := 0;
+	{
+		while(i < len d) {
+			d[i++] = (unhexchar(s[o])<<4)|unhexchar(s[o+1]);
+			o += 2;
+		}
+	} exception e {
+	"unhexchar:*" =>
+		warn("bogus hex string, "+e);
+		return (nil, e[len "unhexchar:":]);
 	}
-	return d;
+	return (d, nil);
+}
+
+hexchar(b: byte): byte
+{
+	if(b > byte 9)
+		return byte 'a'+b-byte 10;
+	return byte '0'+b;
 }
 
 hex(d: array of byte): string
 {
-	s := "";
 	n := len d;
 	if(n == 32)
 		n = 20;
-	for(i := 0; i < n; i++)
-		s += sprint("%02x", int d[i]);
-	return s;
+	r := array[2*n] of byte;
+	i := 0;
+	o := 0;
+	while(i < n) {
+		b := d[o++];
+		r[i++] = hexchar((b>>4) & byte 15);
+		r[i++] = hexchar(b & byte 15);
+	}
+	return string r;
 }
 
 g16(d: array of byte, o: int): (int, int)
@@ -1631,5 +1662,5 @@ say(s: string)
 
 warn(s: string)
 {
-	sys->fprint(sys->fildes(2), "%s\n", s);
+	sys->fprint(sys->fildes(2), "hg: %s\n", s);
 }

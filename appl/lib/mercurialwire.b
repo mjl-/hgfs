@@ -603,7 +603,7 @@ hasnodeid(l: list of ref Nodeid, e: ref Nodeid): int
 
 warn(s: string)
 {
-	sys->fprint(sys->fildes(2), "mercurialwire: %s\n", s);
+	sys->fprint(sys->fildes(2), "hgwire: %s\n", s);
 }
 
 say(s: string)
