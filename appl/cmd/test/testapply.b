@@ -12,7 +12,7 @@ include "lists.m";
 	lists: Lists;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Nodeid, Change, Patch, Hunk: import hg;
+	Dirstate, Dirstatefile, Revlog, Repo, Change, Patch, Hunk: import hg;
 
 dflag: int;
 

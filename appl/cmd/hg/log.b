@@ -9,8 +9,8 @@ include "bufio.m";
 include "string.m";
 	str: String;
 include "mercurial.m";
-	mercurial: Mercurial;
-	Revlog, Repo, Nodeid, Change: import mercurial;
+	hg: Mercurial;
+	Revlog, Repo, Change: import hg;
 
 dflag: int;
 vflag: int;
@@ -24,8 +24,8 @@ init(nil: ref Draw->Context, args: list of string)
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
 	str = load String String->PATH;
-	mercurial = load Mercurial Mercurial->PATH;
-	mercurial->init();
+	hg = load Mercurial Mercurial->PATH;
+	hg->init();
 
 	revision := -1;
 	hgpath := "";
@@ -37,7 +37,7 @@ init(nil: ref Draw->Context, args: list of string)
 		case c {
 		'd' =>	dflag++;
 			if(dflag > 1)
-				mercurial->debug++;
+				hg->debug++;
 		'v' =>	vflag++;
 		'r' =>	revision = int arg->earg();
 		'h' =>	hgpath = arg->earg();

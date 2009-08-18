@@ -75,6 +75,13 @@ more cpu & memory efficient:
   might be part of the high mem usage for hgfs File's.
 - do we keep Manifest & Manifestfile in memory?  perhaps we can do
   without and save memory.
+- should not have fixed number of rev's cached data, but one
+  base+delta's?  or perhaps not the base as it's pretty big (half
+  the size of the delta's i think) and can be read quickly?
+- readdir/stat on file in files/ requires reading,decompressing,parsing
+  patches to calculate the size.  perhaps we should just list files
+  as zero length until they are read?  or just suffer the slowness
+  and perhaps hide it with caching.
 
 - use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
 - think about other tools such as pull & clone.

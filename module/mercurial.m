@@ -4,24 +4,19 @@ Mercurial: module {
 	init:	fn();
 
 	debug:	int;
+	nullnode:	con "0000000000000000000000000000000000000000";
 
-	Nodeid: adt {
-		d:	array of byte;
-
-		parse:	fn(s: string): (ref Nodeid, string);
-		create:	fn(d: array of byte, n1, n2: ref Nodeid): ref Nodeid;
-		text:	fn(n: self ref Nodeid): string;
-		cmp:	fn(n1, n2: ref Nodeid): int;
-		isnull:	fn(n: self ref Nodeid): int;
-	};
-	nullnode: ref Nodeid;
+	checknodeid:	fn(n: string): string;
+	createnodeid:	fn(d: array of byte, n1, n2: string): (string, string);
+	unhex:		fn(n: string): array of byte;
+	hex:		fn(d: array of byte): string;
 
 
 	Change: adt {
 		rev:	int;
-		nodeid:	ref Nodeid;
+		nodeid:	string;
 		p1, p2:	int;
-		manifestnodeid:	ref Nodeid;
+		manifestnodeid:	string;
 		who:	string;
 		when, tzoff:	int;
 		extra:	list of (string, string);
@@ -37,15 +32,15 @@ Mercurial: module {
 	Manifestfile: adt {
 		path:	string;
 		mode:	int;
-		nodeid:	ref Nodeid;
+		nodeid:	string;
 		flags:	int;
 	};
 
 	Manifest: adt {
-		nodeid:	ref Nodeid;
+		nodeid:	string;
 		files:	list of ref Manifestfile;
 
-		parse:	fn(data: array of byte, n: ref Nodeid): (ref Manifest, string);
+		parse:	fn(data: array of byte, n: string): (ref Manifest, string);
 	};
 
 
@@ -63,7 +58,7 @@ Mercurial: module {
 	};
 
 	Dirstate: adt {
-		p1, p2:	ref Nodeid;
+		p1, p2:	string;
 		l:	list of ref Dirstatefile;
 	};
 
@@ -72,13 +67,13 @@ Mercurial: module {
 
 	Tag: adt {
 		name:	string;
-		n:	ref Nodeid;
+		n:	string;
 		rev:	int;
 	};
 
 	Branch: adt {
 		name:	string;
-		n:	ref Nodeid;
+		n:	string;
 		rev:	int;
 	};
 
@@ -91,7 +86,7 @@ Mercurial: module {
 		csize:	int;
 		uncsize:	int;
 		base, link, p1, p2:     int;
-		nodeid:	ref Nodeid;
+		nodeid:	string;
 
 		parse:	fn(buf: array of byte, index: int): (ref Entry, string);
 		text:	fn(e: self ref Entry): string;
@@ -126,10 +121,10 @@ Mercurial: module {
 
 		open:		fn(path: string, cacheall: int): (ref Revlog, string);
 		get:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
-		getnodeid:	fn(rl: self ref Revlog, n: ref Nodeid): (array of byte, string);
+		getnodeid:	fn(rl: self ref Revlog, n: string): (array of byte, string);
 		lastrev:	fn(rl: self ref Revlog): (int, string);
 		find:		fn(rl: self ref Revlog, rev: int): (ref Entry, string);
-		findnodeid:	fn(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string);
+		findnodeid:	fn(rl: self ref Revlog, n: string): (ref Entry, string);
 		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
 		pread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): (array of byte, string);
 		length:		fn(rl: self ref Revlog, rev: int): (big, string);
@@ -164,7 +159,7 @@ Mercurial: module {
 		heads:		fn(r: self ref Repo): (array of ref Entry, string);
 		changelog:	fn(r: self ref Repo): (ref Revlog, string);
 		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
-		lookup:		fn(r: self ref Repo, rev: string): (int, ref Nodeid, string);
+		lookup:		fn(r: self ref Repo, rev: string): (int, string, string);
 
 		escape:		fn(r: self ref Repo, path: string): string;
 		storedir:	fn(r: self ref Repo): string;

@@ -9,8 +9,8 @@ include "bufio.m";
 include "string.m";
 	str: String;
 include "mercurial.m";
-	mercurial: Mercurial;
-	Revlog, Repo, Nodeid, Change: import mercurial;
+	hg: Mercurial;
+	Revlog, Repo, Change: import hg;
 
 dflag: int;
 vflag: int;
@@ -24,8 +24,8 @@ init(nil: ref Draw->Context, args: list of string)
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
 	str = load String String->PATH;
-	mercurial = load Mercurial Mercurial->PATH;
-	mercurial->init();
+	hg = load Mercurial Mercurial->PATH;
+	hg->init();
 
 	revision := -1;
 	hgpath := "";
@@ -36,7 +36,7 @@ init(nil: ref Draw->Context, args: list of string)
 		case c {
 		'd' =>	dflag++;
 			if(dflag > 1)
-				mercurial->debug++;
+				hg->debug++;
 		'v' =>	vflag++;
 		'r' =>	revision = int arg->earg();
 		'h' =>	hgpath = arg->earg();
@@ -61,14 +61,14 @@ init(nil: ref Draw->Context, args: list of string)
 		warn(sprint("manifest:\n"));
 		for(l := manifest.files; l != nil; l = tl l) {
 			file := hd l;
-			warn(sprint("%s %q\n", file.nodeid.text(), file.path));
+			warn(sprint("%q %q\n", file.nodeid, file.path));
 		}
 		warn("\n");
 	}
 
 	for(l := manifest.files; l != nil; l = tl l) {
 		file := hd l;
-		say(sprint("reading file %q, nodeid %s", file.path, file.nodeid.text()));
+		say(sprint("reading file %q, nodeid %q", file.path, file.nodeid));
 		(rl, rlerr) := repo.openrevlog(file.path);
 		if(rlerr != nil)
 			fail(rlerr);
@@ -76,7 +76,7 @@ init(nil: ref Draw->Context, args: list of string)
 		if(derr != nil)
 			fail(derr);
 		say("file read...");
-		say(sprint("%s, %q: %d bytes\n", file.nodeid.text(), file.path, len d));
+		say(sprint("%q, %q: %d bytes\n", file.nodeid, file.path, len d));
 
 		# note: it seems we don't have to write directories
 

@@ -14,7 +14,7 @@ include "filter.m";
 	deflate: Filter;
 include "mercurial.m";
 	hg: Mercurial;
-	Revlog, Repo, Entry, Nodeid, Change, Manifest: import hg;
+	Revlog, Repo, Entry, Change, Manifest: import hg;
 include "mercurialwire.m";
 
 init()
@@ -38,7 +38,7 @@ heads(r: ref Repo): (string, string)
 
 		s := "";
 		for(i := 0; i < len entries; i++)
-			s += " "+entries[i].nodeid.text();
+			s += " "+entries[i].nodeid;
 		if(s != nil)
 			s = s[1:];
 		return (s+"\n", nil);
@@ -70,19 +70,19 @@ branches0(r: ref Repo, nodes: string): string
 
 	resp := "";
 	for(l := snodes; l != nil; l = tl l) {
-		n: ref Nodeid;
-		(n, err) = Nodeid.parse(hd l);
+		n := hd l;
+		err = hg->checknodeid(n);
 		if(err != nil)
 			fail(err);
 
-		if(n.isnull()) {
-			resp += sprint("%s %s %s %s\n", n.text(), n.text(), n.text(), n.text());
+		if(n == hg->nullnode) {
+			resp += sprint("%s %s %s %s\n", n, n, n, n);
 			continue;
 		}
 
 		i := findnodeid(entries, n);
 		if(i < 0)
-			fail(sprint("nodeid %s not found", n.text()));
+			fail(sprint("nodeid %q not found", n));
 		e := entries[i];
 		while(e.p1 >= 0 && e.p2 < 0)
 			e = entries[e.p1];
@@ -93,15 +93,15 @@ branches0(r: ref Repo, nodes: string): string
 			np1 = entries[e.p1].nodeid;
 		if(e.p2 >= 0)
 			np2 = entries[e.p2].nodeid;
-		resp += sprint("%s %s %s %s\n", n.text(), e.nodeid.text(), np1.text(), np2.text());
+		resp += sprint("%s %s %s %s\n", n, e.nodeid, np1, np2);
 	}
 	return resp;
 }
 
-findnodeid(a: array of ref Entry, n: ref Nodeid): int
+findnodeid(a: array of ref Entry, n: string): int
 {
 	for(i := 0; i < len a; i++)
-		if(Nodeid.cmp(a[i].nodeid, n) == 0)
+		if(a[i].nodeid == n)
 			return i;
 	return -1;
 }
@@ -128,10 +128,9 @@ between0(r: ref Repo, pair: string): string
 	tip := hd l;
 	base := hd tl l;
 
-	nbase: ref Nodeid;
-	(ntip, err) := Nodeid.parse(tip);
+	err := hg->checknodeid(tip);
 	if(err == nil)
-		(nbase, err) = Nodeid.parse(base);
+		err = hg->checknodeid(base);
 	if(err != nil)
 		fail(err);
 
@@ -143,17 +142,17 @@ between0(r: ref Repo, pair: string): string
 	if(err != nil)
 		fail(err);
 
-	if(ntip.isnull())
+	if(tip == hg->nullnode)
 		return "\n";
 
-	ti := findnodeid(entries, ntip);
+	ti := findnodeid(entries, tip);
 	if(ti < 0)
-		fail("no such tip nodeid "+ntip.text());
+		fail("no such tip nodeid "+tip);
 	bi := -1;
-	if(!nbase.isnull()) {
-		bi = findnodeid(entries, nbase);
+	if(base != hg->nullnode) {
+		bi = findnodeid(entries, base);
 		if(bi < 0)
-			fail("no such base nodeid "+nbase.text());
+			fail("no such base nodeid "+base);
 	}
 
 	count := 0;  # counter of entries seen for branch we are looking at
@@ -163,7 +162,7 @@ between0(r: ref Repo, pair: string): string
 	s := "";
 	while(e.p1 >= 0 && e.rev != bi) {
 		if(count++ == next) {
-			s += sprint("%s%s", lead, e.nodeid.text());
+			s += sprint("%s%s", lead, e.nodeid);
 			lead = " ";
 			next *= 2;
 		}
@@ -180,19 +179,17 @@ lookup(r: ref Repo, key: string): (string, string)
 			fail(err);
 		if(n == nil)
 			fail(sprint("unknown revision %#q", key));
-		return (n.text(), nil);
+		return (n, nil);
 	} exception e {
 	"hgwire:*" =>	return (nil, e[len "hgwire:":]);
 	}
 }
 
-nodes(l: list of string): array of ref Nodeid
+nodes(l: list of string): array of string
 {
-	nodes := array[len l] of ref Nodeid;
-	i := 0;
-	for(; l != nil; l = tl l) {
-		err: string;
-		(nodes[i++], err) = Nodeid.parse(hd l);
+	nodes := l2a(l);
+	for(i := 0; i < len nodes; i++) {
+		err := hg->checknodeid(nodes[i]);
 		if(err != nil)
 			fail(err);
 	}
@@ -224,14 +221,14 @@ openhist(r: ref Repo): (ref Revlog, ref Revlog, array of ref Entry, array of ref
 }
 
 
-filldesc(centries, a: array of ref Entry, nodes: array of ref Nodeid)
+filldesc(centries, a: array of ref Entry, nodes: array of string)
 {
 	for(i := 0; i < len nodes; i++) {
 		ni := 0;
-		if(!nodes[i].isnull())
+		if(nodes[i] != hg->nullnode)
 			ni = findnodeid(centries, nodes[i]);
 		if(ni < 0)
-			fail(sprint("no such nodeid %s", nodes[i].text()));
+			fail(sprint("no such nodeid %q", nodes[i]));
 		say(sprint("mark root entry %d", ni));
 		a[ni] = centries[ni];
 	}
@@ -247,15 +244,15 @@ filldesc(centries, a: array of ref Entry, nodes: array of ref Nodeid)
 	}
 }
 
-fillanc(centries, a: array of ref Entry, nodes: array of ref Nodeid)
+fillanc(centries, a: array of ref Entry, nodes: array of string)
 {
 	for(i := 0; i < len nodes; i++) {
 		ni: int;
-		if(nodes[i].isnull())
+		if(nodes[i] == hg->nullnode)
 			continue;
 		ni = findnodeid(centries, nodes[i]);
 		if(ni < 0)
-			fail(sprint("no such nodeid %s", nodes[i].text()));
+			fail(sprint("no such nodeid %q", nodes[i]));
 		say(sprint("mark head %d", ni));
 		fillanc0(centries, a, ni);
 	}
@@ -340,7 +337,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		if(e == nil)
 			continue;
 
-		say("nodeid: "+sel[i].nodeid.text());
+		say("nodeid: "+sel[i].nodeid);
 
 		hdr := array[4+4*20] of byte;
 		delta: array of byte;
@@ -352,13 +349,13 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		prev = e.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
-		hdr[o:] = e.nodeid.d;
+		hdr[o:] = hg->unhex(e.nodeid);
 		o += 20;
-		hdr[o:] = getnodeid(centries, e.p1).d;
+		hdr[o:] = hg->unhex(getnodeid(centries, e.p1));
 		o += 20;
-		hdr[o:] = getnodeid(centries, e.p2).d;
+		hdr[o:] = hg->unhex(getnodeid(centries, e.p2));
 		o += 20;
-		hdr[o:] = getnodeid(centries, e.link).d;
+		hdr[o:] = hg->unhex(getnodeid(centries, e.link));
 		o += 20;
 
 		ewrite(out, hdr);
@@ -383,7 +380,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		mn := c.manifestnodeid;
 		mi := findnodeid(mentries, mn);
 		if(mi < 0)
-			fail("unknown manifest nodeid "+mn.text());
+			fail(sprint("unknown manifest nodeid %q", mn));
 		me := mentries[mi];
 
 		hdr := array[4+4*20] of byte;
@@ -396,13 +393,13 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		prev = me.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
-		hdr[o:] = me.nodeid.d;
+		hdr[o:] = hg->unhex(me.nodeid);
 		o += 20;
-		hdr[o:] = getnodeid(mentries, me.p1).d;
+		hdr[o:] = hg->unhex(getnodeid(mentries, me.p1));
 		o += 20;
-		hdr[o:] = getnodeid(mentries, me.p2).d;
+		hdr[o:] = hg->unhex(getnodeid(mentries, me.p2));
 		o += 20;
-		hdr[o:] = getnodeid(centries, me.link).d;
+		hdr[o:] = hg->unhex(getnodeid(centries, me.link));
 		o += 20;
 
 		ewrite(out, hdr);
@@ -439,9 +436,9 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Path, centries, sel: array of re
 		n := hd l;
 		i := findnodeid(fentries, n);
 		if(i < 0)
-			fail(sprint("missing nodeid %s for path %q", n.text(), p.path));
+			fail(sprint("missing nodeid %q for path %q", n, p.path));
 		e := fentries[i];
-		say(sprint("\tnodeid %s, link %d, sel[link] nil %d", n.text(), e.link, sel[e.link] == nil));
+		say(sprint("\tnodeid %q, link %d, sel[link] nil %d", n, e.link, sel[e.link] == nil));
 		if(sel[e.link] == nil)
 			continue;
 
@@ -466,13 +463,13 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Path, centries, sel: array of re
 		prev = e.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
-		hdr[o:] = e.nodeid.d;
+		hdr[o:] = hg->unhex(e.nodeid);
 		o += 20;
-		hdr[o:] = getnodeid(fentries, e.p1).d;
+		hdr[o:] = hg->unhex(getnodeid(fentries, e.p1));
 		o += 20;
-		hdr[o:] = getnodeid(fentries, e.p2).d;
+		hdr[o:] = hg->unhex(getnodeid(fentries, e.p2));
 		o += 20;
-		hdr[o:] = getnodeid(centries, e.link).d;
+		hdr[o:] = hg->unhex(getnodeid(centries, e.link));
 		o += 20;
 		ewrite(out, hdr);
 		ewrite(out, delta);
@@ -483,10 +480,10 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Path, centries, sel: array of re
 
 Path: adt {
 	path:	string;
-	nodeids:	list of ref Nodeid;
+	nodeids:	list of string;
 };
 
-addpathnodeid(l: list of ref Path, path: string, nodeid: ref Nodeid): list of ref Path
+addpathnodeid(l: list of ref Path, path: string, nodeid: string): list of ref Path
 {
 	origl := l;
 	for(; l != nil; l = tl l) {
@@ -516,7 +513,7 @@ eogroup(out: ref Sys->FD)
 	ewrite(out, eog);
 }
 
-getnodeid(a: array of ref Entry, p: int): ref Nodeid
+getnodeid(a: array of ref Entry, p: int): string
 {
 	if(p < 0)
 		return hg->nullnode;
@@ -593,12 +590,21 @@ p32(d: array of byte, o: int, v: int): int
 	return 4;
 }
 
-hasnodeid(l: list of ref Nodeid, e: ref Nodeid): int
+hasnodeid(l: list of string, e: string): int
 {
 	for(; l != nil; l = tl l)
-		if(Nodeid.cmp((hd l), e) == 0)
+		if(hd l == e)
 			return 1;
 	return 0;
+}
+
+l2a[T](l: list of T): array of T
+{
+	a := array[len l] of T;
+	i := 0;
+	for(; l != nil; l = tl l)
+		a[i++] = hd l;
+	return a;
 }
 
 warn(s: string)

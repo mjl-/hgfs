@@ -10,7 +10,7 @@ include "string.m";
 	str: String;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstatefile, Revlog, Repo, Nodeid, Change: import hg;
+	Dirstatefile, Revlog, Repo, Change: import hg;
 
 dflag: int;
 vflag: int;
@@ -55,9 +55,9 @@ init(nil: ref Draw->Context, args: list of string)
 	if(vflag) {
 		sys->print("parents:");
 		if(ds.p1 != nil)
-			sys->print(" %s", ds.p1.text());
+			sys->print(" %s", ds.p1);
 		if(ds.p2 != nil)
-			sys->print(" %s", ds.p2.text());
+			sys->print(" %s", ds.p2);
 		sys->print("\n");
 	}
 

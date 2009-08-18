@@ -28,7 +28,7 @@ include "lists.m";
 	lists: Lists;
 include "mercurial.m";
 	hg: Mercurial;
-	Branch, Tag, Revlog, Repo, Entry, Nodeid, Change, Manifest, Manifestfile: import hg;
+	Branch, Tag, Revlog, Repo, Entry, Change, Manifest, Manifestfile: import hg;
 include "../../lib/mercurialwire.m";
 	hgwire: Mercurialwire;
 
@@ -250,7 +250,7 @@ dostyx(gm: ref Tmsg)
 		"changegroupsubset"	=> wirefidfd(m, hgwire->changegroupsubset(repo, hd args, hd tl args));
 		"revision" 	=>
 			rev: int;
-			n: ref Nodeid;
+			n: string;
 			(rev, n, err) = repo.lookup(hd args);
 			say(sprint("repo.lookup %q, rev %d, n nil %d, err %q", hd args, rev, n == nil, err));
 			if(n == nil && err == nil)
@@ -282,7 +282,7 @@ dostyx(gm: ref Tmsg)
 				return replyerror(m, err);
 			s := "";
 			for(l := tags; l != nil; l = tl l)
-				s += sprint("%s %s %d\n", (hd l).n.text(), (hd l).name, (hd l).rev);
+				s += sprint("%q %s %d\n", (hd l).n, (hd l).name, (hd l).rev);
 			srv.reply(styxservers->readstr(m, s));
 
 		Qbranches =>
@@ -291,7 +291,7 @@ dostyx(gm: ref Tmsg)
 				return replyerror(m, err);
 			s := "";
 			for(l := tags; l != nil; l = tl l)
-				s += sprint("%s %s %d\n", (hd l).n.text(), (hd l).name, (hd l).rev);
+				s += sprint("%q %s %d\n", (hd l).n, (hd l).name, (hd l).rev);
 			srv.reply(styxservers->readstr(m, s));
 
 		Qlogrev =>
@@ -594,12 +594,11 @@ revgen(path: big): (int, int)
 
 revmtime(rev: int): int
 {
-	(rt, err) := treeget(rev);
-	if(err != nil)
-		return -1;
-	return rt.mtime;
+	(c, err) := repo.change(rev);
+	if(err == nil)
+		return c.when+c.tzoff;
+	return 0;
 }
-
 
 child(q: int): big
 {
@@ -771,7 +770,7 @@ File: adt {
 	mode:	int;
 	pick {
 	Plain =>
-		nodeid:	ref Nodeid;
+		nodeid:	string;
 		rev:	int;	# -1 => not yet valid
 		length:	int;	# idem
 		mtime:	int;	# idem
@@ -779,13 +778,13 @@ File: adt {
 		files:	list of int;	# gens of children
 	}
 
-	new:	fn(gen, pgen: int, path: string, nodeid: ref Nodeid, flags: int): ref File;
+	new:	fn(gen, pgen: int, path: string, nodeid: string, flags: int): ref File;
 	getplain:	fn(f: self ref File): ref File.Plain;
 	getdir:	fn(f: self ref File): ref File.Dir;
 	text:	fn(f: self ref File): string;
 };
 
-File.new(gen, pgen: int, path: string, nodeid: ref Nodeid, flags: int): ref File
+File.new(gen, pgen: int, path: string, nodeid: string, flags: int): ref File
 {
 	name := str->splitstrr(path, "/").t1;
 	if(nodeid == nil)
@@ -818,7 +817,7 @@ File.text(f: self ref File): string
 	pick ff := f {
 	Plain =>
 		return sprint("<file.plain gen %d,%d, name %q, path %q, nodeid %s, rev %d, length %d, mtime %d>",
-			f.gen, f.pgen, f.name, f.path, ff.nodeid.text(), ff.rev, ff.length, ff.mtime);
+			f.gen, f.pgen, f.name, f.path, ff.nodeid, ff.rev, ff.length, ff.mtime);
 	Dir =>	return sprint("<file.dir gen %d,%d, name %q, path %q>", f.gen, f.pgen, f.name, f.path);
 	}
 }

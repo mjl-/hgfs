@@ -22,7 +22,6 @@ include "mercurial.m";
 
 
 Entrysize:	con 64;
-Nullnode:	con -1;
 Cachemax:	con 64;  # max number of cached items in a revlog
 
 init()
@@ -36,58 +35,42 @@ init()
 	daytime = load Daytime Daytime->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
-
-	nullnode = ref Nodeid(array[20] of {* => byte 0});
 }
 
-Nodeid.parse(s: string): (ref Nodeid, string)
+checknodeid(n: string): string
 {
-	(d, err) := unhex(s);
-	if(err != nil)
-		return (nil, err);
-	if(len d != 20)
-		return (nil, sprint("bad nodeid: %s", s));
-	return (ref Nodeid (d), nil);
+	if(len n != 40)
+		return sprint("wrong nodeid length, len n %d != %d", len n, 40);
+	for(i := 0; i < len n; i++)
+		case n[i] {
+		'0' to '9' or
+		'a' to 'f' =>
+			;
+		* =>
+			return sprint("bad nodeid char %c in %q", n[i], n);
+		}
+	return nil;
 }
 
-Nodeid.create(d: array of byte, n1, n2: ref Nodeid): ref Nodeid
+createnodeid(d: array of byte, n1, n2: string): (string, string)
 {
-	if(Nodeid.cmp(n1, n2) > 0)
+	if(n1 > n2)
 		(n1, n2) = (n2, n1);
-
-	state: ref DigestState;
-	state = keyring->sha1(n1.d[:20], 20, nil, state);
-	state = keyring->sha1(n2.d[:20], 20, nil, state);
-	state = keyring->sha1(d, len d, nil, state);
+	(nn1, err1) := eunhex(n1);
+	(nn2, err2) := eunhex(n2);
+	if(err1 != nil)
+		return (nil, err1);
+	if(err2 != nil)
+		return (nil, err2);
+	
+	st: ref DigestState;
+	st = keyring->sha1(nn1[:20], 20, nil, st);
+	st = keyring->sha1(nn2[:20], 20, nil, st);
+	st = keyring->sha1(d, len d, nil, st);
 
 	hash := array[Keyring->SHA1dlen] of byte;
-	keyring->sha1(nil, 0, hash, state);
-	return ref Nodeid(hash);
-}
-
-
-Nodeid.text(n: self ref Nodeid): string
-{
-	if(n == nil)
-		return "<nil>";
-	return hex(n.d[:20]);
-}
-
-Nodeid.cmp(n1, n2: ref Nodeid): int
-{
-	if(len n1.d != len n2.d)
-		raise "bogus nodeid comparison";
-	for(i := 0; i < len n1.d; i++)
-		if(n1.d[i] < n2.d[i])
-			return -1;
-		else if(n1.d[i] > n2.d[i])
-			return 1;
-	return 0;
-}
-
-Nodeid.isnull(n: self ref Nodeid): int
-{
-	return Nodeid.cmp(n, nullnode) == 0;
+	keyring->sha1(nil, 0, hash, st);
+	return (hex(hash), nil);
 }
 
 getline(b: ref Iobuf): string
@@ -107,20 +90,17 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 	c.rev = e.rev;
 	c.p1 = e.p1;
 	c.p2 = e.p2;
-	if(c.p1 == Nullnode)
-		c.p1 = -1;
-	if(c.p2 == Nullnode)
-		c.p2 = -1;
+	# p1 & p2 can be -1 for "no parent"
 
 	b := bufio->aopen(data);
 
 	l := getline(b);
 	if(l == nil)
 		return (nil, "missing manifest nodeid");
-	(nbuf, err) := unhex(l);
+	err := checknodeid(l);
 	if(err != nil)
 		return (nil, err);
-	c.manifestnodeid = ref Nodeid(nbuf);
+	c.manifestnodeid = l;
 
 	l = getline(b);
 	if(l == nil)
@@ -189,7 +169,7 @@ Change.findextra(c: self ref Change, k: string): (string, string)
 Change.text(c: self ref Change): string
 {
 	s := "";
-	s += sprint("revision: %d %s\n", c.rev, c.nodeid.text());
+	s += sprint("revision: %d %q\n", c.rev, c.nodeid);
 	pstr := "";
 	if(c.p1 == -1 && c.p2 == -1)
 		pstr = "  none";
@@ -198,7 +178,7 @@ Change.text(c: self ref Change): string
 	if(c.p2 != -1)
 		pstr += ", "+string c.p2;
 	s += "parents: "+pstr[2:]+"\n";
-	s += sprint("manifest nodeid: %s\n", c.manifestnodeid.text());
+	s += sprint("manifest nodeid: %q\n", c.manifestnodeid);
 	s += sprint("committer: %s\n", c.who);
 	when := daytime->gmt(c.when);
 	when.tzoff = c.tzoff;
@@ -223,7 +203,7 @@ split(buf: array of byte, b: byte): (array of byte, array of byte)
 	return (buf, array[0] of byte);
 }
 
-Manifest.parse(d: array of byte, n: ref Nodeid): (ref Manifest, string)
+Manifest.parse(d: array of byte, n: string): (ref Manifest, string)
 {
 	files: list of ref Manifestfile;
 
@@ -236,17 +216,15 @@ Manifest.parse(d: array of byte, n: ref Nodeid): (ref Manifest, string)
 			case flagstr := string nodeid[40:] {
 			"l" =>	flags = Flink;
 			"x" =>	flags = Fexec;
-			"lx" or "xl" =>	flags = Flink|Fexec;
+			"lx" or
+			"xl" =>	flags = Flink|Fexec;
 			* =>	return (nil, sprint("unknown flags: %q", flagstr));
 			}
 			nodeid = nodeid[:40];
 			#say(sprint("manifest flags=%x", flags));
 		}
 		# say(sprint("nodeid=%q path=%q", string nodeid, string path));
-		(nbuf, err) := unhex(string nodeid);
-		if(err != nil)
-			return (nil, err);
-		mf := ref Manifestfile(string path, 0, ref Nodeid(nbuf), flags);
+		mf := ref Manifestfile(string path, 0, string nodeid, flags);
 		files = mf::files;
 	}
 	files = lists->reverse(files);
@@ -387,9 +365,12 @@ say(sprint("reconstruct, len base %d, len patches %d, e.rev %d", len base, len p
 		pn1 = rl.ents[e.p1].nodeid;
 	if(e.p2 >= 0)
 		pn2 = rl.ents[e.p2].nodeid;
-	n := Nodeid.create(d, pn1, pn2);
-	if(Nodeid.cmp(n, e.nodeid) != 0)
-		return (nil, sprint("nodeid mismatch, have %s, header claims %s, (p1 %s p2 %s, len %d, entry %s)", n.text(), e.nodeid.text(), pn1.text(), pn2.text(), len d, e.text()));
+	n: string;
+	(n, err) = createnodeid(d, pn1, pn2);
+	if(err != nil)
+		return (nil, err);
+	if(n != e.nodeid)
+		return (nil, sprint("nodeid mismatch, have %q, header claims %q, (p1 %q p2 %q, len %d, entry %s)", n, e.nodeid, pn1, pn2, len d, e.text()));
 
 	rl.fullrev = e.rev;
 	rl.full = d;
@@ -572,7 +553,7 @@ Revlog.get(rl: self ref Revlog, rev: int): (array of byte, string)
 	return (d, err);
 }
 
-Revlog.getnodeid(rl: self ref Revlog, n: ref Nodeid): (array of byte, string)
+Revlog.getnodeid(rl: self ref Revlog, n: string): (array of byte, string)
 {
 	d: array of byte;
 	(e, err) := rl.findnodeid(n);
@@ -647,16 +628,16 @@ Revlog.find(rl: self ref Revlog, rev: int): (ref Entry, string)
 }
 
 
-Revlog.findnodeid(rl: self ref Revlog, nodeid: ref Nodeid): (ref Entry, string)
+Revlog.findnodeid(rl: self ref Revlog, n: string): (ref Entry, string)
 {
 	err := reopen(rl);
 	if(err != nil)
 		return (nil, err);
 	# looking for nodeid
 	for(i := 0; i < len rl.ents; i++)
-		if(Nodeid.cmp(rl.ents[i].nodeid, nodeid) == 0)
+		if(rl.ents[i].nodeid == n)
 			return (rl.ents[i], nil);
-	return (nil, sprint("no nodeid %s", nodeid.text()));
+	return (nil, sprint("no nodeid %q", n));
 }
 
 Revlog.lastrev(rl: self ref Revlog): (int, string)
@@ -911,9 +892,7 @@ Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
 			}
 		l = dsf::l;
 	}
-	nd1 := ref Nodeid (p1);
-	nd2 := ref Nodeid (p2);
-	ds := ref Dirstate (nd1, nd2, lists->reverse(l));
+	ds := ref Dirstate (hex(p1), hex(p2), lists->reverse(l));
 	return (ds, nil);
 }
 
@@ -947,7 +926,8 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 
 		name := hd tl toks;
 		e: ref Entry;
-		(n, err) := Nodeid.parse(hd toks);
+		n := hd toks;
+		err := checknodeid(n);
 		if(err == nil)
 			(e, err) = cl.findnodeid(n);
 		if(err != nil)
@@ -1007,7 +987,8 @@ say("repo.branches");
 
 		name := hd tl toks;
 		e: ref Entry;
-		(n, err) := Nodeid.parse(hd toks);
+		n := hd toks;
+		err := checknodeid(n);
 		if(err == nil)
 			(e, err) = cl.findnodeid(n);
 		if(err != nil)
@@ -1096,7 +1077,7 @@ Repo.manifestlog(r: self ref Repo): (ref Revlog, string)
 	return (r.ml, nil);
 }
 
-Repo.lookup(r: self ref Repo, s: string): (int, ref Nodeid, string)
+Repo.lookup(r: self ref Repo, s: string): (int, string, string)
 {
 	if(s == "null")
 		return (-1, nullnode, nil);
@@ -1128,20 +1109,20 @@ Repo.lookup(r: self ref Repo, s: string): (int, ref Nodeid, string)
 
 	# try exact nodeid match
 	if(len s == 40) {
-		n: ref Nodeid;
-		(n, err) = Nodeid.parse(s);
-		e: ref Entry;
-		if(err == nil)
-			(e, err) = cl.findnodeid(n);
-		if(err != nil)
-			return (-1, nil, err);
-		return (e.rev, e.nodeid, nil);
+		err = checknodeid(s);
+		if(err == nil) {
+			e: ref Entry;
+			(e, err) = cl.findnodeid(s);
+			if(err != nil)
+				return (-1, nil, err);
+			return (e.rev, e.nodeid, nil);
+		}
 	}
 
 	# try as nodeid
 	m: ref Entry;
 	for(i := 0; i < len ents; i++)
-		if(str->prefix(s, ents[i].nodeid.text())) {
+		if(str->prefix(s, ents[i].nodeid)) {
 			if(m != nil)
 				return (-1, nil, nil); # ambiguous
 			m = ents[i];
@@ -1403,9 +1384,7 @@ Entry.parse(buf: array of byte, index: int): (ref Entry, string)
 	(e.link, o) = g32(buf, o);
 	(e.p1, o) = g32(buf, o);
 	(e.p2, o) = g32(buf, o);
-	node := array[20] of byte;
-	node[:] = buf[o:o+20];
-	e.nodeid = ref Nodeid(node);
+	e.nodeid = hex(buf[o:o+20]);
 	o += 20;
 	if(len buf-o != 12)
 		return (nil, "wrong number of superfluous bytes");
@@ -1418,7 +1397,7 @@ Entry.parse(buf: array of byte, index: int): (ref Entry, string)
 
 Entry.text(e: self ref Entry): string
 {
-	return sprint("<Entry rev=%d, off=%bd,%bd flags=%x size=%d,%d base=%d link=%d p1=%d p2=%d nodeid=%s>", e.rev, e.offset, e.ioffset, e.flags, e.csize, e.uncsize, e.base, e.link, e.p1, e.p2, e.nodeid.text());
+	return sprint("<Entry rev=%d, off=%bd,%bd flags=%x size=%d,%d base=%d link=%d p1=%d p2=%d nodeid=%q>", e.rev, e.offset, e.ioffset, e.flags, e.csize, e.uncsize, e.base, e.link, e.p1, e.p2, e.nodeid);
 }
 
 
@@ -1476,10 +1455,10 @@ unhexchar(c: int): byte
 	'a' to 'f' =>	return byte (c-'a'+10);
 	'A' to 'F' =>	return byte (c-'A'+10);
 	}
-	raise "unhexchar:not hex char";
+	raise sprint("unhexchar:not hex char, %c", c);
 }
 
-unhex(s: string): (array of byte, string)
+eunhex(s: string): (array of byte, string)
 {
 	if(len s % 2 != 0)
 		return (nil, "bogus hex string");
@@ -1494,16 +1473,22 @@ unhex(s: string): (array of byte, string)
 		}
 	} exception e {
 	"unhexchar:*" =>
-		warn("bogus hex string, "+e);
+		warn(sprint("bogus hex string, %q, s %q", e, s));
+		raise e;
 		return (nil, e[len "unhexchar:":]);
 	}
 	return (d, nil);
 }
 
+unhex(s: string): array of byte
+{
+	return eunhex(s).t0;
+}
+
 hexchar(b: byte): byte
 {
 	if(b > byte 9)
-		return byte 'a'+b-byte 10;
+		return byte 'a'-byte 10+b;
 	return byte '0'+b;
 }
 
@@ -1515,7 +1500,7 @@ hex(d: array of byte): string
 	r := array[2*n] of byte;
 	i := 0;
 	o := 0;
-	while(i < n) {
+	while(o < n) {
 		b := d[o++];
 		r[i++] = hexchar((b>>4) & byte 15);
 		r[i++] = hexchar(b & byte 15);

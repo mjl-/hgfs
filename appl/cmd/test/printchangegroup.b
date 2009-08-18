@@ -14,7 +14,7 @@ include "encoding.m";
 	base16: Encoding;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Nodeid, Change, Patch, Hunk: import hg;
+	Dirstate, Dirstatefile, Revlog, Repo, Change, Patch, Hunk: import hg;
 
 HgPrintchangegroup: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -26,7 +26,7 @@ vflag: int;
 b: ref Iobuf;
 
 Chunk: adt {
-	n, p1, p2, link:	ref Nodeid;
+	n, p1, p2, link:	string;
 	p:	ref Patch;
 };
 
@@ -84,10 +84,10 @@ chunks()
 
 printchunk(c: ref Chunk)
 {
-	sys->print("\tnode:  %s\n", c.n.text());
-	sys->print("\tp1:    %s\n", c.p1.text());
-	sys->print("\tp2:    %s\n", c.p2.text());
-	sys->print("\tlink:  %s\n", c.link.text());
+	sys->print("\tnode:  %q\n", c.n);
+	sys->print("\tp1:    %q\n", c.p1);
+	sys->print("\tp2:    %q\n", c.p2);
+	sys->print("\tlink:  %q\n", c.link);
 	if(vflag) {
 		sys->print("\thunks:\n");
 		for(l := c.p.l; l != nil; l = tl l) {
@@ -130,13 +130,13 @@ readchunk(): ref Chunk
 		fail(sprint("short chunk, len buf %d < 4*20, buf %s or %s", len buf, base16->enc(buf), string buf));
 	c := ref Chunk;
 	o := 0;
-	c.n = ref Nodeid (buf[o:o+20]);
+	c.n = hg->hex(buf[o:o+20]);
 	o += 20;
-	c.p1 = ref Nodeid (buf[o:o+20]);
+	c.p1 = hg->hex(buf[o:o+20]);
 	o += 20;
-	c.p2 = ref Nodeid (buf[o:o+20]);
+	c.p2 = hg->hex(buf[o:o+20]);
 	o += 20;
-	c.link = ref Nodeid (buf[o:o+20]);
+	c.link = hg->hex(buf[o:o+20]);
 	o += 20;
 	(p, err) := Patch.parse(buf[o:]);
 	if(err != nil)

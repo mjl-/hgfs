@@ -10,7 +10,7 @@ include "string.m";
 	str: String;
 include "mercurial.m";
 	hg: Mercurial;
-	Revlog, Repo, Entry, Nodeid, Change: import hg;
+	Revlog, Repo, Entry, Change: import hg;
 
 dflag: int;
 
@@ -53,7 +53,7 @@ init(nil: ref Draw->Context, args: list of string)
 
 	for(i := 0; i < len entries; i++) {
 		e := entries[i];
-		sys->print("%s, rev %d", e.nodeid.text(), e.rev);
+		sys->print("%q, rev %d", e.nodeid, e.rev);
 		if(e.p1 >= 0) {
 			if(e.p2 >= 0)
 				sys->print(", parents %d %d\n", e.p1, e.p2);

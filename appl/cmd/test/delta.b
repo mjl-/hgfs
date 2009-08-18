@@ -10,7 +10,7 @@ include "string.m";
 	str: String;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Nodeid, Change: import hg;
+	Dirstate, Dirstatefile, Revlog, Repo, Change: import hg;
 
 dflag: int;
 vflag: int;
