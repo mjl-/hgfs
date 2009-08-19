@@ -2,8 +2,8 @@
 
 DIRS=\
 	hg\
-	cgi\
-	test\
+	#cgi\
+	#test\
 
 SYSMODULES=\
 	arg.m\

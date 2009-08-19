@@ -12,6 +12,9 @@ include "lists.m";
 	lists: Lists;
 include "filter.m";
 	deflate: Filter;
+include "tables.m";
+	tables: Tables;
+	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change, Manifest: import hg;
@@ -25,6 +28,7 @@ init()
 	lists = load Lists Lists->PATH;
 	deflate = load Filter Filter->DEFLATEPATH;
 	deflate->init();
+	tables = load Tables Tables->PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
 }
@@ -223,10 +227,13 @@ openhist(r: ref Repo): (ref Revlog, ref Revlog, array of ref Entry, array of ref
 
 filldesc(centries, a: array of ref Entry, nodes: array of string)
 {
+	havenull := 0;
 	for(i := 0; i < len nodes; i++) {
-		ni := 0;
-		if(nodes[i] != hg->nullnode)
-			ni = findnodeid(centries, nodes[i]);
+		if(nodes[i] == hg->nullnode) {
+			havenull++;
+			continue;
+		}
+		ni := findnodeid(centries, nodes[i]);
 		if(ni < 0)
 			fail(sprint("no such nodeid %q", nodes[i]));
 		say(sprint("mark root entry %d", ni));
@@ -234,10 +241,9 @@ filldesc(centries, a: array of ref Entry, nodes: array of string)
 	}
 
 	# for each entry in "centries", if a parent is set in "a", set the entry in "a" too
-	say(sprint("filldesc, len %d, len nodes %d", len a, len nodes));
 	for(i = 0; i < len centries; i++) {
 		e := centries[i];
-		if((e.p1 >= 0 && a[e.p1] != nil) || (e.p2 >= 0 && a[e.p2] != nil)) {
+		if(havenull && e.p1 == -1 || (e.p1 >= 0 && a[e.p1] != nil) || (e.p2 >= 0 && a[e.p2] != nil)) {
 			say(sprint("mark entry %d", i));
 			a[i] = centries[i];
 		}
@@ -278,8 +284,7 @@ changegroup(r: ref Repo, sroots: string): (ref Sys->FD, string)
 			desc[:] = centries;
 		else
 			filldesc(centries, desc, roots);
-		fd := mkchangegroup(r, cl, ml, centries, mentries, desc);
-		return (fd, nil);
+		return mkchangegroup(r, cl, ml, centries, mentries, desc);
 	} exception e {
 	"hgwire:*" =>	return (nil, e[len "hgwire:":]);
 	}
@@ -302,20 +307,19 @@ changegroupsubset(r: ref Repo, sbases, sheads: string): (ref Sys->FD, string)
 				desc[i] = nil;
 				say(sprint("unmarking %d", i));
 			}
-		fd := mkchangegroup(r, cl, ml, centries, mentries, desc);
-		return (fd, nil);
+		return mkchangegroup(r, cl, ml, centries, mentries, desc);
 	} exception e {
 	"hgwire:*" =>	return (nil, e[len "hgwire:":]);
 	}
 }
 
-mkchangegroup(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry): ref Sys->FD
+mkchangegroup(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry): (ref Sys->FD, string)
 {
 	p := array[2] of ref Sys->FD;
 	if(sys->pipe(p) < 0)
-		fail(sprint("pipe: %r"));
+		return (nil, sprint("pipe: %r"));
 	spawn mkchangegroup0(r, cl, ml, centries, mentries, sel, p[0]);
-	return p[1];
+	return (p[1], nil);
 }
 
 mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array of ref Entry, out: ref Sys->FD)
@@ -365,7 +369,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 
 	# do another pass, now for the manifests of the changegsets
 	# gather the paths+their nodeids we might need to send info about, for the next pass
-	paths: list of ref Path;
+	tree := Treerevs.new();
 	prev = -1;
 	for(i = 0; i < len sel; i++) {
 		ce := sel[i];
@@ -399,26 +403,29 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		o += 20;
 		hdr[o:] = hg->unhex(getnodeid(mentries, me.p2));
 		o += 20;
-		hdr[o:] = hg->unhex(getnodeid(centries, me.link));
+		hdr[o:] = hg->unhex(getnodeid(centries, ce.rev));
 		o += 20;
 
 		ewrite(out, hdr);
 		ewrite(out, delta);
 
 		for(fl := m.files; fl != nil; fl = tl fl)
-			paths = addpathnodeid(paths, (hd fl).path, (hd fl).nodeid);
+			tree.add((hd fl).path, (hd fl).nodeid);
 	}
 	eogroup(out);
 
 	# finally, the files in the manifests of the changesets
-	paths = finishpaths(paths);
-	for(pl := paths; pl != nil; pl = tl pl)
-		filegroup(r, out, hd pl, centries, sel);
+	tree.l = lists->reverse(tree.l);
+	for(pl := tree.l; pl != nil; pl = tl pl) {
+		p := hd pl;
+		p.nodeids = lists->reverse(p.nodeids);
+		filegroup(r, out, p, centries, sel);
+	}
 	eogroup(out);
 }
 
 
-filegroup(r: ref Repo, out: ref Sys->FD, p: ref Path, centries, sel: array of ref Entry)
+filegroup(r: ref Repo, out: ref Sys->FD, p: ref Pathrevs, centries, sel: array of ref Entry)
 {
 	(rl, err) := r.openrevlog(p.path);
 	if(err != nil)
@@ -478,39 +485,48 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Path, centries, sel: array of re
 		eogroup(out);
 }
 
-Path: adt {
+Pathrevs: adt {
 	path:	string;
 	nodeids:	list of string;
 };
 
-addpathnodeid(l: list of ref Path, path: string, nodeid: string): list of ref Path
-{
-	origl := l;
-	for(; l != nil; l = tl l) {
-		p := hd l;
-		if(p.path != path)
-			continue;
+Treerevs: adt {
+	l:	list of ref Pathrevs;
+	pathmap:	ref Strhash[ref Pathrevs];  # key: path
+	pathrevmap:	ref Strhash[ref Pathrevs];  # key: nodeid+path
 
-		if(!hasnodeid(p.nodeids, nodeid))
-			p.nodeids = nodeid::p.nodeids;
-		return origl;
+	new:	fn(): ref Treerevs;
+	add:	fn(t: self ref Treerevs, path: string, nodeid: string);
+};
+
+Treerevs.new(): ref Treerevs
+{
+	t := ref Treerevs;
+	t.pathmap = t.pathmap.new(128, nil);
+	t.pathrevmap = t.pathrevmap.new(1024, nil);
+	return t;
+}
+
+Treerevs.add(t: self ref Treerevs, path: string, nodeid: string)
+{
+	if(t.pathrevmap.find(nodeid+path) != nil)
+		return;
+
+	p := t.pathmap.find(path);
+	if(p == nil) {
+		p = ref Pathrevs (path, nil);
+		t.l = p::t.l;
+		t.pathmap.add(path, p);
 	}
-	np := ref Path (path, nodeid::nil);
-	return np::origl;
+
+	p.nodeids = nodeid::p.nodeids;
+	t.pathrevmap.add(nodeid+path, p);
 }
 
-finishpaths(l: list of ref Path): list of ref Path
-{
-	nl := lists->reverse(l);
-	for(; l != nil; l = tl l)
-		(hd l).nodeids = lists->reverse((hd l).nodeids);
-	return nl;
-}
-
+endofgroup := array[4] of {* => byte 0};
 eogroup(out: ref Sys->FD)
 {
-	eog := array[4] of {* => byte 0};
-	ewrite(out, eog);
+	ewrite(out, endofgroup);
 }
 
 getnodeid(a: array of ref Entry, p: int): string

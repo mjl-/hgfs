@@ -117,8 +117,10 @@ init(nil: ref Draw->Context, args: list of string)
 		'D' =>	styxservers->traceset(1);
 		'T' =>	revtreemax = int arg->earg();
 		'd' =>	dflag++;
-			if(dflag > 1)
+			if(dflag > 1) {
 				hg->debug++;
+				hgwire->dflag++;
+			}
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
 		}
