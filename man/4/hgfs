@@ -2,6 +2,7 @@
 .SH NAME
 hg/fs \- mount mercurial repository
 .SH SYNOPSIS
+mount {
 .B hg/fs
 [
 .B -Dd
@@ -12,6 +13,7 @@ hg/fs \- mount mercurial repository
 .B -h
 .I path
 ]
+} mtpt
 .SH DESCRIPTION
 .B Hg/fs
 reads a mercurial repository and exports its contents over styx.  It allows walking to the files of any revision, read the commit (log) message or manifest for any revision, or read a .tgz snapshot of any revision.  Revisions are either numbers, (partial) ``nodeid''s, tags, branches (their tips) or the special name ``tip''.
