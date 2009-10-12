@@ -12,11 +12,12 @@ include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change: import hg;
 
-dflag: int;
-
 HgHeads: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -32,9 +33,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg->setusage(arg->progname()+" [-d] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
 		}

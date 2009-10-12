@@ -12,12 +12,13 @@ include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Change: import hg;
 
-dflag: int;
-vflag: int;
-
 HgTar: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
+vflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -34,9 +35,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg->setusage(arg->progname()+" [-dv] [-r rev] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		'v' =>	vflag++;
 		'r' =>	revision = int arg->earg();
 		'h' =>	hgpath = arg->earg();

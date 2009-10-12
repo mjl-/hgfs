@@ -24,13 +24,18 @@ include "filter.m";
 include "tables.m";
 	tables: Tables;
 	Table, Strhash: import tables;
-include "lists.m";
-	lists: Lists;
+include "util0.m";
+	util: Util0;
+	min, fail, warn, l2a, kill, killgrp, suffix: import util;
 include "mercurial.m";
 	hg: Mercurial;
 	Branch, Tag, Revlog, Repo, Entry, Change, Manifest, Manifestfile: import hg;
 include "../../lib/mercurialwire.m";
 	hgwire: Mercurialwire;
+
+HgFs: module {
+	init:	fn(nil: ref Draw->Context, args: list of string);
+};
 
 
 dflag: int;
@@ -96,11 +101,6 @@ revlogmax: con 16;
 revlogtab := array[revlogmax] of (string, ref Revlog, int);  # path, revlog, lastuse
 Revlogtimeout: con 5*60;  # time after last use that cached revlog is scheduled for remove
 
-
-HgFs: module {
-	init:	fn(nil: ref Draw->Context, args: list of string);
-};
-
 init(nil: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
@@ -115,7 +115,8 @@ init(nil: ref Draw->Context, args: list of string)
 	deflate = load Filter Filter->DEFLATEPATH;
 	deflate->init();
 	tables = load Tables Tables->PATH;
-	lists = load Lists Lists->PATH;
+	util = load Util0 Util0->PATH;
+	util->init();
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
 	hgwire = load Mercurialwire Mercurialwire->PATH;
@@ -131,11 +132,7 @@ init(nil: ref Draw->Context, args: list of string)
 		case c {
 		'D' =>	styxservers->traceset(1);
 		'T' =>	revtreemax = int arg->earg();
-		'd' =>	dflag++;
-			if(dflag > 1) {
-				hg->debug++;
-				hgwire->dflag++;
-			}
+		'd' =>	hg->debug = hgwire->dflag = dflag++;
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
 		}
@@ -226,7 +223,7 @@ wireargs(s: string, keys: list of string): (list of string, string)
 	}
 	if(len keys != len v)
 		return (nil, sprint("wrong number of arguments, want %d, got %d", len keys, len v));
-	return (lists->reverse(v), nil);
+	return (util->rev(v), nil);
 }
 
 dostyx(gm: ref Tmsg)
@@ -1059,7 +1056,7 @@ Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 		r = f::r;
 		pf.files = f.gen::pf.files;
 	}
-	rt := ref Revtree (rev, l2a(lists->reverse(r)), c.when+c.tzoff, 0);
+	rt := ref Revtree (rev, l2a(util->rev(r)), c.when+c.tzoff, 0);
 
 	if(dflag) {
 		say(sprint("revtree.new done, have %d paths:", len r));
@@ -1362,12 +1359,6 @@ tarhdr(path: string, size: big, mtime: int): array of byte
 	return d;
 }
 
-
-suffix(suf, s: string): int
-{
-	return len suf <= len s && suf == s[len s-len suf:];
-}
-
 has(s: string, c: int): int
 {
 	for(i := 0; i < len s; i++)
@@ -1376,49 +1367,8 @@ has(s: string, c: int): int
 	return 0;
 }
 
-min(a, b: int): int
-{
-	if(a < b)
-		return a;
-	return b;
-}
-
-l2a[T](l: list of T): array of T
-{
-	a := array[len l] of T;
-	i := 0;
-	for(; l != nil; l = tl l)
-		a[i++] = hd l;
-	return a;
-}
-
-killgrp(pid: int)
-{
-	fd := sys->open(sprint("/prog/%d/ctl", pid), Sys->OWRITE);
-	if(fd != nil)
-		sys->fprint(fd, "killgrp");
-}
-
-kill(pid: int)
-{
-	fd := sys->open(sprint("/prog/%d/ctl", pid), Sys->OWRITE);
-	if(fd != nil)
-		sys->fprint(fd, "kill");
-}
-
-warn(s: string)
-{
-	sys->fprint(sys->fildes(2), "hg/fs: %s\n", s);
-}
-
 say(s: string)
 {
 	if(dflag)
 		warn(s);
-}
-
-fail(s: string)
-{
-	warn(s);
-	raise "fail:"+s;
 }

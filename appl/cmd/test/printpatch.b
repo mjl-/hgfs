@@ -12,11 +12,12 @@ include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dirstatefile, Revlog, Repo, Change, Patch, Hunk: import hg;
 
-dflag: int;
-
 HgPrintpatch: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -30,9 +31,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg->setusage(arg->progname()+" [-d]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();

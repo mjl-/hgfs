@@ -38,7 +38,7 @@ heads(r: ref Repo): (string, string)
 	{
 		(entries, err) := r.heads();
 		if(err != nil)
-			fail(err);
+			error(err);
 
 		s := "";
 		for(i := 0; i < len entries; i++)
@@ -70,14 +70,14 @@ branches0(r: ref Repo, nodes: string): string
 	if(err == nil)
 		(entries, err) = cl.entries();
 	if(err != nil)
-		fail(err);
+		error(err);
 
 	resp := "";
 	for(l := snodes; l != nil; l = tl l) {
 		n := hd l;
 		err = hg->checknodeid(n);
 		if(err != nil)
-			fail(err);
+			error(err);
 
 		if(n == hg->nullnode) {
 			resp += sprint("%s %s %s %s\n", n, n, n, n);
@@ -86,7 +86,7 @@ branches0(r: ref Repo, nodes: string): string
 
 		i := findnodeid(entries, n);
 		if(i < 0)
-			fail(sprint("nodeid %q not found", n));
+			error(sprint("nodeid %q not found", n));
 		e := entries[i];
 		while(e.p1 >= 0 && e.p2 < 0)
 			e = entries[e.p1];
@@ -128,7 +128,7 @@ between0(r: ref Repo, pair: string): string
 {
 	l := sys->tokenize(pair, "-").t1;
 	if(len l != 2)
-		fail(sprint("bad pair %#q, need two nodeid's separated by dash", pair));
+		error(sprint("bad pair %#q, need two nodeid's separated by dash", pair));
 	tip := hd l;
 	base := hd tl l;
 
@@ -136,7 +136,7 @@ between0(r: ref Repo, pair: string): string
 	if(err == nil)
 		err = hg->checknodeid(base);
 	if(err != nil)
-		fail(err);
+		error(err);
 
 	entries: array of ref Entry;
 	cl: ref Revlog;
@@ -144,19 +144,19 @@ between0(r: ref Repo, pair: string): string
 	if(err == nil)
 		(entries, err) = cl.entries();
 	if(err != nil)
-		fail(err);
+		error(err);
 
 	if(tip == hg->nullnode)
 		return "\n";
 
 	ti := findnodeid(entries, tip);
 	if(ti < 0)
-		fail("no such tip nodeid "+tip);
+		error("no such tip nodeid "+tip);
 	bi := -1;
 	if(base != hg->nullnode) {
 		bi = findnodeid(entries, base);
 		if(bi < 0)
-			fail("no such base nodeid "+base);
+			error("no such base nodeid "+base);
 	}
 
 	count := 0;  # counter of entries seen for branch we are looking at
@@ -180,9 +180,9 @@ lookup(r: ref Repo, key: string): (string, string)
 	{
 		(nil, n, err) := r.lookup(key);
 		if(err != nil)
-			fail(err);
+			error(err);
 		if(n == nil)
-			fail(sprint("unknown revision %#q", key));
+			error(sprint("unknown revision %#q", key));
 		return (n, nil);
 	} exception e {
 	"hgwire:*" =>	return (nil, e[len "hgwire:":]);
@@ -195,7 +195,7 @@ nodes(l: list of string): array of string
 	for(i := 0; i < len nodes; i++) {
 		err := hg->checknodeid(nodes[i]);
 		if(err != nil)
-			fail(err);
+			error(err);
 	}
 	return nodes;
 }
@@ -207,19 +207,19 @@ openhist(r: ref Repo): (ref Revlog, ref Revlog, array of ref Entry, array of ref
 	err: string;
 	(cl, err) = r.changelog();
 	if(err != nil)
-		fail("reading changelog: "+err);
+		error("reading changelog: "+err);
 
 	(centries, err) = cl.entries();
 	if(err != nil)
-		fail("reading changelog entries: "+err);
+		error("reading changelog entries: "+err);
 
 	(ml, err) = r.manifestlog();
 	if(err != nil)
-		fail("reading manifest: "+err);
+		error("reading manifest: "+err);
 
 	(mentries, err) = ml.entries();
 	if(err != nil)
-		fail("reading manifest entries: "+err);
+		error("reading manifest entries: "+err);
 
 	return (cl, ml, centries, mentries);
 }
@@ -235,7 +235,7 @@ filldesc(centries, a: array of ref Entry, nodes: array of string)
 		}
 		ni := findnodeid(centries, nodes[i]);
 		if(ni < 0)
-			fail(sprint("no such nodeid %q", nodes[i]));
+			error(sprint("no such nodeid %q", nodes[i]));
 		say(sprint("mark root entry %d", ni));
 		a[ni] = centries[ni];
 	}
@@ -258,7 +258,7 @@ fillanc(centries, a: array of ref Entry, nodes: array of string)
 			continue;
 		ni = findnodeid(centries, nodes[i]);
 		if(ni < 0)
-			fail(sprint("no such nodeid %q", nodes[i]));
+			error(sprint("no such nodeid %q", nodes[i]));
 		say(sprint("mark head %d", ni));
 		fillanc0(centries, a, ni);
 	}
@@ -332,7 +332,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 	err: string;
 	(out, err) = pushfilter(deflate, "z0", out);
 	if(err != nil)
-		fail("init deflate: "+err);
+		error("init deflate: "+err);
 
 	# print the changelog group chunks
 	prev := -1;
@@ -349,7 +349,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 			prev = e.p1;
 		(delta, err) = cl.delta(prev, e.rev);
 		if(err != nil)
-			fail(sprint("reading delta for changelog rev %d: %s", e.rev, err));
+			error(sprint("reading delta for changelog rev %d: %s", e.rev, err));
 		prev = e.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
@@ -380,11 +380,11 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		m: ref Manifest;
 		(c, m, err) = r.manifest(ce.rev);
 		if(err != nil)
-			fail(sprint("getting manifest nodeid for changeset rev %d: %s", ce.rev, err));
+			error(sprint("getting manifest nodeid for changeset rev %d: %s", ce.rev, err));
 		mn := c.manifestnodeid;
 		mi := findnodeid(mentries, mn);
 		if(mi < 0)
-			fail(sprint("unknown manifest nodeid %q", mn));
+			error(sprint("unknown manifest nodeid %q", mn));
 		me := mentries[mi];
 
 		hdr := array[4+4*20] of byte;
@@ -393,7 +393,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 			prev = me.p1;
 		(delta, err) = ml.delta(prev, me.rev);
 		if(err != nil)
-			fail(sprint("reading delta for manifest rev %d: %s", me.rev, err));
+			error(sprint("reading delta for manifest rev %d: %s", me.rev, err));
 		prev = me.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
@@ -429,12 +429,12 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Pathrevs, centries, sel: array o
 {
 	(rl, err) := r.openrevlog(p.path);
 	if(err != nil)
-		fail(sprint("openrevlog %q: %s", p.path, err));
+		error(sprint("openrevlog %q: %s", p.path, err));
 
 	fentries: array of ref Entry;
 	(fentries, err) = rl.entries();
 	if(err != nil)
-		fail(sprint("entries for %q: %s", p.path, err));
+		error(sprint("entries for %q: %s", p.path, err));
 
 	wrote := 0;
 
@@ -443,7 +443,7 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Pathrevs, centries, sel: array o
 		n := hd l;
 		i := findnodeid(fentries, n);
 		if(i < 0)
-			fail(sprint("missing nodeid %q for path %q", n, p.path));
+			error(sprint("missing nodeid %q for path %q", n, p.path));
 		e := fentries[i];
 		say(sprint("\tnodeid %q, link %d, sel[link] nil %d", n, e.link, sel[e.link] == nil));
 		if(sel[e.link] == nil)
@@ -466,7 +466,7 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Pathrevs, centries, sel: array o
 			prev = e.p1;
 		(delta, err) = rl.delta(prev, e.rev);
 		if(err != nil)
-			fail(sprint("reading delta for rev %d, path %q: %s", e.rev, p.path, err));
+			error(sprint("reading delta for rev %d, path %q: %s", e.rev, p.path, err));
 		prev = e.rev;
 		o := 0;
 		o += p32(hdr, o, len hdr+len delta);
@@ -543,10 +543,10 @@ ewrite(fd: ref Sys->FD, d: array of byte)
 
 	{
 		if(sys->write(fd, d, len d) != len d)
-			fail(sprint("write: %r"));
+			error(sprint("write: %r"));
 	} exception e {
 	"write on closed pipe" =>
-		fail("write "+e);
+		error("write "+e);
 	}
 }
 
@@ -634,7 +634,7 @@ say(s: string)
 		warn(s);
 }
 
-fail(s: string)
+error(s: string)
 {
 	warn(s);
 	raise "hgwire:"+s;

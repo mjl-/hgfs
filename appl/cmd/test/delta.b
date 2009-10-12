@@ -12,12 +12,13 @@ include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dirstatefile, Revlog, Repo, Change: import hg;
 
-dflag: int;
-vflag: int;
-
 HgDelta: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
+vflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -37,9 +38,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg->setusage(arg->progname()+" [-dv] [-h path] [-c | -m | revlog] rev");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		'c' =>
 			if(which != Tfile)
 				arg->usage();

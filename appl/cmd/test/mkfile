@@ -6,6 +6,10 @@ TARG=\
 	printheads.dis\
 	printchangegroup.dis\
 	testapply.dis\
+	makepatch.dis\
+	mergepatch.dis\
+	trunclast.dis\
+
 
 SYSMODULES=\
 	mercurial.m\

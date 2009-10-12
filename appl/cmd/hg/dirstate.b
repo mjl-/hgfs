@@ -12,12 +12,13 @@ include "mercurial.m";
 	hg: Mercurial;
 	Dirstatefile, Revlog, Repo, Change: import hg;
 
-dflag: int;
-vflag: int;
-
 HgDirstate: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
+vflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
