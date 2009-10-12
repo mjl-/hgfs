@@ -8,8 +8,6 @@ include "bufio.m";
 	Iobuf: import bufio;
 include "filter.m";
 	inflate: Filter;
-include "lists.m";
-	lists: Lists;
 include "keyring.m";
 	keyring: Keyring;
 	DigestState: import keyring;
@@ -17,7 +15,9 @@ include "string.m";
 	str: String;
 include "daytime.m";
 	daytime: Daytime;
-
+include "util0.m";
+	util: Util0;
+	max, l2a, readfile, writefile: import util;
 include "mercurial.m";
 
 
@@ -29,12 +29,13 @@ init()
 	sys = load Sys Sys->PATH;
 	bufio = load Bufio Bufio->PATH;
 	bufio->open("/dev/null", Bufio->OREAD); # xxx ensure bufio is properly initialized
-	lists = load Lists Lists->PATH;
 	keyring = load Keyring Keyring->PATH;
 	str = load String String->PATH;
 	daytime = load Daytime Daytime->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
+	util = load Util0 Util0->PATH;
+	util->init();
 }
 
 checknodeid(n: string): string
@@ -71,6 +72,50 @@ createnodeid(d: array of byte, n1, n2: string): (string, string)
 	hash := array[Keyring->SHA1dlen] of byte;
 	keyring->sha1(nil, 0, hash, st);
 	return (hex(hash), nil);
+}
+
+
+differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
+{
+	path := mf.path;
+	(ok, dir) := sys->stat(path);
+	if(ok != 0) {
+		warn(sprint("stat %q: %r", path));
+		return 1;
+	}
+	mfx := (mf.flags & Fexec) != 0;
+	fx := (dir.mode & 8r100) != 0;
+	if(mfx != fx)
+		return 1;
+	if(dir.length == size && dir.mtime == mtime)
+		return 0;
+
+	buf := readfile(path, -1);
+	if(buf == nil) {
+		warn(sprint("read %q: %r", path));
+		return 1;
+	}
+
+	e, e1, e2: ref Entry;
+	(rl, err) := repo.openrevlog(path);
+	if(err == nil)
+		(e, err) = rl.findnodeid(mf.nodeid);
+	if(err == nil && e.p1 >= 0)
+		(e1, err) = rl.find(e.p1);
+	if(err == nil && e.p2 >= 0)
+		(e2, err) = rl.find(e.p2);
+	if(err != nil) {
+		warn(sprint("%q: %s", path, err));
+		return 1;
+	}
+	n1 := n2 := nullnode;
+	if(e1 != nil)
+		n1 = e1.nodeid;
+	if(e2 != nil)
+		n2 = e2.nodeid;
+	n: string;
+	(n, err) = createnodeid(buf, n1, n2);
+	return err != nil || mf.nodeid != n;
 }
 
 getline(b: ref Iobuf): string
@@ -139,7 +184,7 @@ Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
 			break;
 		c.files = l::c.files;
 	}
-	c.files = lists->reverse(c.files);
+	c.files = util->rev(c.files);
 
 	d := array[0] of byte;
 	for(;;) {
@@ -227,8 +272,16 @@ Manifest.parse(d: array of byte, n: string): (ref Manifest, string)
 		mf := ref Manifestfile(string path, 0, string nodeid, flags);
 		files = mf::files;
 	}
-	files = lists->reverse(files);
+	files = util->rev(files);
 	return (ref Manifest(n, files), nil);
+}
+
+Manifest.find(m: self ref Manifest, path: string): ref Manifestfile
+{
+	for(l := m.files; l != nil; l = tl l)
+		if((hd l).path == path)
+			return hd l;
+	return nil;
 }
 
 reopen(rl: ref Revlog): string
@@ -308,7 +361,7 @@ readrevlog(rl: ref Revlog, ib: ref Iobuf): string
 
 		l = e::l;
 	}
-	rl.ents = l2a(lists->reverse(l));
+	rl.ents = l2a(util->rev(l));
 	rl.cache = array[len rl.ents] of array of byte;
 	rl.ncache = 0;
 	rl.full = nil;
@@ -596,9 +649,9 @@ Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
 	#say(sprint("delta with full contents, start %d end %d size %d, e %s", 0, obuflen, len buf, e.text()));
 	delta := array[3*4+len buf] of byte;
 	o := 0;
-	o += p32(delta, o, 0); # start
-	o += p32(delta, o, obuflen); # end
-	o += p32(delta, o, len buf); # size
+	o = p32(delta, o, 0); # start
+	o = p32(delta, o, obuflen); # end
+	o = p32(delta, o, len buf); # size
 	delta[o:] = buf;
 	return (delta, nil);
 }
@@ -908,6 +961,7 @@ Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
 	buf := array[1+4+4+4+4] of byte;
 	l: list of ref Dirstatefile;
 	for(;;) {
+		off := b.offset();
 		n := b.read(buf, len buf);
 		if(n == 0)
 			break;
@@ -917,6 +971,8 @@ Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
 		o := 0;
 		stb := buf[o++];
 		dsf.state = find(statestrs, sprint("%c", int stb));
+		if(dsf.state < 0)
+			return (nil, sprint("bad state in dirstate at offset %bd, char %#x, %c", off, int stb, int stb));
 		(dsf.mode, o) = g32(buf, o);
 		(dsf.size, o) = g32(buf, o);
 		(dsf.mtime, o) = g32(buf, o);
@@ -927,17 +983,81 @@ Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
 		n = b.read(namebuf := array[length] of byte, len namebuf);
 		if(n != len namebuf)
 			return (nil, "early eof in dirstate while reading path");
-		dsf.name = string namebuf;
+		dsf.path = string namebuf;
 		for(nul := 0; nul < len namebuf; nul++)
 			if(namebuf[nul] == byte '\0') {
-				dsf.name = string namebuf[:nul];
-				dsf.origname = string namebuf[nul+1:];
+				dsf.path = string namebuf[:nul];
+				dsf.origpath = string namebuf[nul+1:];
 				break;
 			}
 		l = dsf::l;
 	}
-	ds := ref Dirstate (hex(p1), hex(p2), lists->reverse(l));
+	ds := ref Dirstate (hex(p1), hex(p2), util->rev(l));
 	return (ds, nil);
+}
+
+Dirstate.packedsize(ds: self ref Dirstate): int
+{
+	n := 20+20;
+	for(l := ds.l; l != nil; l = tl l) {
+		f := hd l;
+		n += 1+4+4+4+4+len array of byte f.path;
+		if(f.origpath != nil)
+			n += 1+len array of byte f.origpath;
+	}
+	return n;
+}
+
+Dirstate.pack(ds: self ref Dirstate, buf: array of byte)
+{
+	o := 0;
+	buf[o:] = unhex(ds.p1);
+	o += 20;
+	buf[o:] = unhex(ds.p2);
+	o += 20;
+	for(l := ds.l; l != nil; l = tl l) {
+		f := hd l;
+		buf[o++] = byte statestrs[f.state][0];
+		o = p32(buf, o, f.mode);
+		o = p32(buf, o, f.size);
+		o = p32(buf, o, f.mtime);
+		path := f.path;
+		if(f.origpath != nil)
+			path += "\0"+f.origpath;
+		pathbuf := array of byte path;
+		o = p32(buf, o, len pathbuf);
+		buf[o:] = pathbuf;
+		o += len pathbuf;
+	}
+}
+
+Repo.writedirstate(r: self ref Repo, ds: ref Dirstate): string
+{
+	n := ds.packedsize();
+	ds.pack(buf := array[n] of byte);
+	path := r.path+"/dirstate";
+	fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
+	if(fd == nil)
+		return sprint("create %q: %r", path);
+	if(sys->write(fd, buf, len buf) != len buf)
+		return sprint("write %q: %r", path);
+	return nil;
+}
+
+Repo.workbranch(r: self ref Repo): (string, string)
+{
+	buf := readfile(r.path+"/branch", 1024);
+	if(buf == nil)
+		return (nil, sprint("%r"));
+	b := string buf;
+	if(b != nil && b[len b-1] == '\n')
+		b = b[:len b-1];
+	return (b, nil);
+}
+
+Repo.writeworkbranch(r: self ref Repo, branch: string): string
+{
+	return writefile(r.path+"/branch", 1, array of byte (branch+"\n"));
 }
 
 Repo.workroot(r: self ref Repo): string
@@ -947,30 +1067,77 @@ Repo.workroot(r: self ref Repo): string
 
 Repo.tags(r: self ref Repo): (list of ref Tag, string)
 {
-	path := r.workroot()+"/"+".hgtags";
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
-		return (nil, nil); # absent file is valid
+	buf := readfile(r.workroot()+"/"+".hgtags", 8*1024);
+	if(buf == nil)
+		return (nil, sprint("%r"));
+	s := string buf;
+	return parsetags(r, s);
+}
 
+Repo.revtags(r: self ref Repo, revstr: string): (list of ref Tag, string)
+{
+	(rev, n, err) := r.lookup(revstr);
+	if(err == nil && n == nil)
+		err = "no such revision";
+	if(err != nil)
+		return (nil, err);
+
+	cl: ref Revlog;
+	ents: array of ref Entry;
+	(cl, err) = r.changelog();
+	if(err == nil)
+		(ents, err) = cl.entries();
+	if(err != nil)
+		return (nil, err);
+
+	el: list of ref Entry;
+	for(i := 0; i < len ents; i++) {
+		e := ents[i];
+		if(e.p1 == rev || e.p2 == rev)
+			el = e::el;
+	}
+
+	tags: list of ref Tag;
+	for(; el != nil; el = tl el) {
+		e := hd el;
+		buf: array of byte;
+		(buf, err) = r.get(e.nodeid, ".hgtags");
+		if(err != nil)
+			continue;
+		l: list of ref Tag;
+		(l, err) = parsetags(r, string buf);
+		if(err != nil)
+			return (nil, err);
+		for(; l != nil; l = tl l) {
+			t := hd l;
+			if(t.n == n)
+				tags = t::tags;
+		}
+	}
+	return (tags, nil);
+}
+
+parsetags(r: ref Repo, s: string): (list of ref Tag, string)
+{
 	(cl, clerr) := r.changelog();
 	if(clerr != nil)
 		return (nil, "opening changelog, for revisions: "+clerr);
 
 	l: list of ref Tag;
-	for(;;) {
-		s := b.gets('\n');
-		if(s == nil)
-			break;
-		if(s[len s-1] != '\n')
+	while(s != nil) {
+		ln: string;
+		(ln, s) = str->splitstrl(s, "\n");
+		if(s == nil || s[0] != '\n')
 			return (nil, sprint("missing newline in .hgtags: %s", s));
-		s = s[:len s-1];
-		toks := sys->tokenize(s, " ").t1;
-		if(len toks != 2)
+		if(s != nil)
+			s = s[1:];
+		t := sys->tokenize(ln, " ").t1;
+		if(len t != 2)
 			return (nil, sprint("wrong number of tokes in .hgtags: %s", s));
 
-		name := hd tl toks;
+		name := hd tl t;
 		e: ref Entry;
-		n := hd toks;
+		n := hd t;
 		err := checknodeid(n);
 		if(err == nil)
 			(e, err) = cl.findnodeid(n);
@@ -978,7 +1145,7 @@ Repo.tags(r: self ref Repo): (list of ref Tag, string)
 			return (nil, err);
 		l = ref Tag (name, n, e.rev)::l;
 	}
-	return (lists->reverse(l), nil);
+	return (util->rev(l), nil);
 }
 
 branchupdate(l: list of ref Branch, branch: string, e: ref Entry): list of ref Branch
@@ -1071,7 +1238,7 @@ say("repo.branches");
 			return (nil, err);
 		l = ref Branch ("default", e.nodeid, e.rev)::l;
 	}
-	return (lists->reverse(l), nil);
+	return (util->rev(l), nil);
 }
 
 Repo.heads(r: self ref Repo): (array of ref Entry, string)
@@ -1096,7 +1263,7 @@ Repo.heads(r: self ref Repo): (array of ref Entry, string)
 	for(i = 0; i < len a; i++)
 		if(a[i] != nil)
 			hl = a[i]::hl;
-	return (l2a(lists->reverse(hl)), nil);
+	return (l2a(util->rev(hl)), nil);
 }
 
 Repo.changelog(r: self ref Repo): (ref Revlog, string)
@@ -1195,6 +1362,27 @@ Repo.lookup(r: self ref Repo, s: string): (int, string, string)
 	return (-1, nil, nil);
 }
 
+Repo.get(r: self ref Repo, revstr, path: string): (array of byte, string)
+{
+	(rev, n, err) := r.lookup(revstr);
+	if(err == nil && n == nil)
+		err = "no such revision";
+	if(err != nil)
+		return (nil, err);
+	m: ref Manifest;
+	(nil, m, err) = r.manifest(rev);
+	if(err != nil)
+		return (nil, err);
+	mf := m.find(path);
+	if(mf == nil)
+		return (nil, sprint("file %#q not in revision %q", path, revstr));
+	rl: ref Revlog;
+	(rl, err) = r.openrevlog(path);
+	if(err != nil)
+		return (nil, err);
+	return rl.getnodeid(mf.nodeid);
+}
+
 
 find(a: array of string, e: string): int
 {
@@ -1218,9 +1406,9 @@ Dirstatefile.text(f: self ref Dirstatefile): string
 {
 	tm := daytime->local(daytime->now());
 	timestr := sprint("%04d-%02d-%02d %2d:%2d:%2d", tm.year+1900, tm.mon+1, tm.mday, tm.hour, tm.min, tm.sec);
-	s := sprint("%s %03uo %10d %s %q", statestr(f.state), 8r777&f.mode, f.size, timestr, f.name);
-	if(f.origname != nil)
-		s += sprint(" (from %q)", f.origname);
+	s := sprint("%s %03uo %10d %s %q", statestr(f.state), 8r777&f.mode, f.size, timestr, f.path);
+	if(f.origpath != nil)
+		s += sprint(" (from %q)", f.origpath);
 	return s;
 }
 
@@ -1320,7 +1508,7 @@ Group.apply(g: ref Group, p: ref Patch): ref Group
 		o = h.end;
 	}
 	ng.copy(g, o, g.size());
-	ng.l = lists->reverse(ng.l);
+	ng.l = util->rev(ng.l);
 	return ng;
 }
 
@@ -1392,7 +1580,7 @@ Patch.parse(d: array of byte): (ref Patch, string)
 		l = h::l;
 		o += length;
 	}
-	return (ref Patch(lists->reverse(l)), nil);
+	return (ref Patch(util->rev(l)), nil);
 }
 
 Patch.text(p: self ref Patch): string
@@ -1473,7 +1661,7 @@ inflatebuf(src: array of byte): (array of byte, string)
 		if(len m.buf != 0)
 			return (nil, "inflatebuf: trailing bytes after inflating: "+hex(m.buf));
 		#say(sprint("received %d bytes total", total));
-		return (flatten(total, lists->reverse(l)), nil);
+		return (flatten(total, util->rev(l)), nil);
 	Info =>
 		say("filter: "+m.msg);
 	Error =>
@@ -1599,7 +1787,7 @@ workdirstate(path: string): (ref Dirstate, string)
 	ds := ref Dirstate (nil, nil, nil);
 	err := workstatedir0(ds, path, "");
 	if(err == nil)
-		ds.l = lists->reverse(ds.l);
+		ds.l = util->rev(ds.l);
 	return (ds, nil);
 }
 
@@ -1650,29 +1838,13 @@ breadn(b: ref Iobuf, buf: array of byte, e: int): int
 	return s;
 }
 
-max(a, b: int): int
-{
-	if(a > b)
-		return a;
-	return b;
-}
-
 p32(d: array of byte, o: int, v: int): int
 {
 	d[o++] = byte (v>>24);
 	d[o++] = byte (v>>16);
 	d[o++] = byte (v>>8);
 	d[o++] = byte (v>>0);
-	return 4;
-}
-
-l2a[T](l: list of T): array of T
-{
-	a := array[len l] of T;
-	i := 0;
-	for(; l != nil; l = tl l)
-		a[i++] = hd l;
-	return a;
+	return o;
 }
 
 a2l[T](a: array of T): list of T

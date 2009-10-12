@@ -16,6 +16,7 @@ SYSMODULES=\
 	keyring.m\
 	lists.m\
 	string.m\
+	util0.m\
 
 DISBIN=$ROOT/dis/lib
 

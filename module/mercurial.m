@@ -10,7 +10,7 @@ Mercurial: module
 	createnodeid:	fn(d: array of byte, n1, n2: string): (string, string);
 	unhex:		fn(n: string): array of byte;
 	hex:		fn(d: array of byte): string;
-
+	differs:	fn(r: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int;
 
 	Change: adt {
 		rev:	int;
@@ -41,6 +41,7 @@ Mercurial: module
 		files:	list of ref Manifestfile;
 
 		parse:	fn(data: array of byte, n: string): (ref Manifest, string);
+		find:	fn(m: self ref Manifest, path: string): ref Manifestfile;
 	};
 
 
@@ -51,8 +52,8 @@ Mercurial: module
 		mode:	int;
 		size:	int;
 		mtime:	int;
-		name:	string;
-		origname:	string;	# only non-nil in case of copy/move
+		path:	string;
+		origpath:	string;	# only non-nil in case of copy/move
 
 		text:	fn(f: self ref Dirstatefile): string;
 	};
@@ -60,6 +61,9 @@ Mercurial: module
 	Dirstate: adt {
 		p1, p2:	string;
 		l:	list of ref Dirstatefile;
+
+		packedsize:	fn(e: self ref Dirstate): int;
+		pack:	fn(e: self ref Dirstate, buf: array of byte);
 	};
 
 	workdirstate:	fn(path: string): (ref Dirstate, string);
@@ -70,6 +74,7 @@ Mercurial: module
 		n:	string;
 		rev:	int;
 	};
+	parsetags:	fn(r: ref Repo, s: string): (list of ref Tag, string);
 
 	Branch: adt {
 		name:	string;
@@ -153,15 +158,21 @@ Mercurial: module
 		change:		fn(r: self ref Repo, rev: int): (ref Change, string);
 		mtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): (int, string);
 		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
+		writedirstate:	fn(r: self ref Repo, ds: ref Dirstate): string;
 		workroot:	fn(r: self ref Repo): string;
 		tags:		fn(r: self ref Repo): (list of ref Tag, string);
+		revtags:	fn(r: self ref Repo, revstr: string): (list of ref Tag, string);
 		branches:	fn(r: self ref Repo): (list of ref Branch, string);
+		workbranch:	fn(r: self ref Repo): (string, string);
+		writeworkbranch:	fn(r: self ref Repo, b: string): string;
 		heads:		fn(r: self ref Repo): (array of ref Entry, string);
 		changelog:	fn(r: self ref Repo): (ref Revlog, string);
 		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
 		lookup:		fn(r: self ref Repo, rev: string): (int, string, string);
+		get:		fn(r: self ref Repo, revstr, path: string): (array of byte, string);
 
 		escape:		fn(r: self ref Repo, path: string): string;
+		unescape:	fn(r: self ref Repo, path: string): (string, string);
 		storedir:	fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;

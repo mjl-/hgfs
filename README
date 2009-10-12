@@ -1,6 +1,7 @@
 # status
 
-usable for reading repositories.  the code can use some refinement.
+hg/fs can be used (reads repositories).  the other tools, that write
+to the repository, are not yet safe to use.
 
 
 # intro
@@ -14,8 +15,7 @@ repositories (also undocumented).
 
 # install
 
-first, ensure a "mkconfig" file is present.  a bind/symlink to the
-mkconfig of your inferno install should do.  create the directory
+make sure the path in mkconfig is correct.  create the directory
 $ROOT/dis/hg.  now "mk install" to compile and install the files.
 
 if you want to install hg/websrv, the http pull protocol server,
@@ -49,6 +49,9 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - hg/fs: "default" in the listings is ugly.  it would make sense
   to name "default-tip" just "tip", but that's confusing with standard
   mercurial practice.  better solution?
+
+- hg/update: fix updating to "null".
+- hg/identity:  print + for local changes, multiple parents
 
 - library: make proper binary diffs.  helps cgi/websrv.
 

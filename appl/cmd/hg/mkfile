@@ -8,6 +8,8 @@ TARG=\
 	dirstate.dis\
 	status.dis\
 	readrevlog.dis\
+	update.dis\
+	identify.dis\
 
 SYSMODULES=\
 	mercurial.m\
@@ -23,6 +25,7 @@ SYSMODULES=\
 	styxservers.m\
 	sys.m\
 	tables.m\
+	util0.m\
 
 DISBIN=$ROOT/dis/hg
 

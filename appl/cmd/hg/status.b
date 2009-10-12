@@ -8,35 +8,37 @@ include "arg.m";
 include "bufio.m";
 include "string.m";
 	str: String;
+include "util0.m";
+	util: Util0;
+	fail, warn, l2a, inssort: import util;
 include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dirstatefile, Revlog, Repo, Change: import hg;
 
-dflag: int;
-vflag: int;
-
 HgStatus: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
 	str = load String String->PATH;
+	util = load Util0 Util0->PATH;
+	util->init();
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
 
 	hgpath := "";
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-dv] [-h path]");
+	arg->setusage(arg->progname()+" [-d] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
-		'v' =>	vflag++;
+		'd' =>	hg->debug = dflag++;
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
 		}
@@ -60,44 +62,42 @@ init(nil: ref Draw->Context, args: list of string)
 
 	# first print status for all known files
 	dsf := l2a(ds.l);
-	sort(dsf, statepathge);
+	inssort(dsf, statepathge);
 	for(i := 0; i < len dsf; i++) {
 		e := dsf[i];
-		if(e.state != hg->STremove && e.state != hg->STuntracked && !exists(root+"/"+e.name)) {
-			sys->print("! %q\n", e.name);
+		if(e.state != hg->STremove && e.state != hg->STuntracked && !exists(root+"/"+e.path)) {
+			sys->print("! %q\n", e.path);
 			continue;
 		}
 		case e.state {
-		hg->STneedmerge =>	sys->print("M %q\n", e.name);
-		hg->STremove =>	sys->print("R %q\n", e.name);
-		hg->STadd =>	sys->print("A %q\n", e.name);
+		hg->STneedmerge =>	sys->print("M %q\n", e.path);
+		hg->STremove =>	sys->print("R %q\n", e.path);
+		hg->STadd =>	sys->print("A %q\n", e.path);
 		hg->STnormal =>
-			dirty := e.size == hg->SZdirty || isdirty(root+"/"+e.name, e);
-			# xxx when e.size == SZcheck, we should check contents, not meta
-			if(dirty)
-				sys->print("M %q\n", e.name);
-		hg->STuntracked =>	sys->print("? %q\n", e.name);
+			if(isdirty(root+"/"+e.path, e))
+				sys->print("M %q\n", e.path);
+		hg->STuntracked =>	sys->print("? %q\n", e.path);
 		* =>	raise "missing case";
 		}
 	}
 
 	# print all remaining paths as unknown
 	wdsf := l2a(wds.l);
-	sort(wdsf, pathge);
-	sort(dsf, pathge);
+	inssort(wdsf, pathge);
+	inssort(dsf, pathge);
 	i = 0;
 	wi := 0;
 	while(wi < len wdsf) {
-		while(dsf[i].name < wdsf[wi].name)
+		while(i < len dsf && dsf[i].path < wdsf[wi].path)
 			i++;
 
-		if(dsf[i].name == wdsf[wi].name) {
+		if(i < len dsf && dsf[i].path == wdsf[wi].path) {
 			i++;
 			wi++;
 			continue;
 		}
 
-		sys->print("? %q\n", wdsf[wi].name);
+		sys->print("? %q\n", wdsf[wi].path);
 		wi++;
 	}
 }
@@ -109,23 +109,19 @@ isdirty(path: string, dsf: ref Dirstatefile): int
 		warn(sprint("stat %q: %r", path));
 		return 1;
 	}
-	return (dir.mode&8r777) == dsf.mode && (dsf.size < 0 || int dir.length == dsf.size) && dir.mtime == dsf.mtime;
+	fx := (dsf.mode & 8r100) != 0;
+	dx := (dir.mode & 8r100) != 0;
+	if(fx != dx)
+		return 1;
+	if(int dir.length == dsf.size && dir.mtime == dsf.mtime)
+		return 0;
+	return 1;
 }
 
 exists(e: string): int
 {
 	(ok, dir) := sys->stat(e);
 	return ok == 0 && (dir.mode&Sys->DMDIR) == 0;
-}
-
-sort[T](a: array of T, ge: ref fn(a, b: T): int)
-{
-	for(i := 1; i < len a; i++) {
-		tmp := a[i];
-		for(j := i; j > 0 && ge(a[j-1], tmp); j--)
-			a[j] = a[j-1];
-		a[j] = tmp;
-	}
 }
 
 statepathge(a, b: ref Dirstatefile): int
@@ -137,25 +133,11 @@ statepathge(a, b: ref Dirstatefile): int
 
 pathge(a, b: ref Dirstatefile): int
 {
-	return a.name >= b.name;
+	return a.path >= b.path;
 }
 
-l2a[T](l: list of T): array of T
+say(s: string)
 {
-	a := array[len l] of T;
-	i := 0;
-	for(; l != nil; l = tl l)
-		a[i++] = hd l;
-	return a;
-}
-
-warn(s: string)
-{
-	sys->fprint(sys->fildes(2), "%s\n", s);
-}
-
-fail(s: string)
-{
-	warn(s);
-	raise "fail:"+s;
+	if(dflag)
+		warn(s);
 }
