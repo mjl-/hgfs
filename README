@@ -25,6 +25,9 @@ you'll need need "web":
 
 and a separate "mk install" in appl/cmd/cgi/.
 
+when building from within inferno, insert SYSHOST=Inferno and ROOT=
+in the mk invocations to override the values in the mkconfig.
+
 
 # latest version
 
@@ -42,10 +45,7 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 # todo
 
 - cgi/websrv: test with various client versions
-- cgi/websrv: replace with a shell script.
 
-- hg/fs: add another tree that lists .i(/.d) files.  reading them gives
-  back revision numbers
 - hg/fs: "default" in the listings is ugly.  it would make sense
   to name "default-tip" just "tip", but that's confusing with standard
   mercurial practice.  better solution?

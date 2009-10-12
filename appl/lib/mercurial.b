@@ -760,6 +760,50 @@ Repo.escape(r: self ref Repo, path: string): string
 	return res;
 }
 
+Repo.unescape(r: self ref Repo, path: string): (string, string)
+{
+	if(!r.isstore())
+		return (path, nil);
+
+	p := array of byte path;
+	ps := 0;
+	pe := len p;
+	s := array[len p] of byte;
+	ns := 0;
+	while(ps < pe)
+		case c := int p[ps++] {
+		'_' =>
+			if(ps == pe)
+				return (nil, "name ends with underscore");
+			case cc := int path[ps++] {
+			'_' =>
+				s[ns++] = byte '_';
+			'a' to 'z' =>
+				s[ns++] = byte (cc-'a'+'A');
+			* =>
+				return (nil, sprint("bad underscored character %c (%#x)", cc, cc));
+			}
+
+		'~' =>
+			if(pe-ps < 2)
+				return (nil, "missing chars after ~");
+			{
+				s[ns++] = (unhexchar(int p[ps])<<4) | unhexchar(int p[ps+1]);
+				ps += 2;
+			} exception {
+			"unhexchar:*" =>
+				return (nil, "bad hex chars after ~");
+			}
+
+		127 to 255 or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' =>
+			return (nil, sprint("invalid character %c (%#x)", c, c));
+
+		* =>
+			s[ns++] = byte c;
+		}
+	return (string s[:ns], nil);
+}
+
 Repo.storedir(r: self ref Repo): string
 {
 	path := r.path;

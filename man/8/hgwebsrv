@@ -16,7 +16,7 @@ hg/websrv \- serve mercurial http pull protocol
 .SH DESCRIPTION
 .B Websrv
 serves the mercurial pull protocol over http.  This protocol helps
-pull updates from a remote mercurial repository quickly and in a
+pull updates from a remote mercurial repository with few requests and in a
 bandwidth-efficient manner.
 The mercurial repositories in
 .I root
@@ -38,11 +38,10 @@ In responses to browsers, mention that a html front-end exists at the
 concatenation of baseurl and the repository name.
 .PP
 .SH EXAMPLES
-Start a httpd to serve the repositories in
+Start a web server to serve the repositories in
 .IR /n/hg .
-
 .EX
-	httpd -c / {hg/websrv -d /n/hg} GET .
+ip/shttpd -c / {hg/websrv -d /n/hg} GET .
 .EE
 .SH SOURCE
 .B /appl/cmd/cgi/websrv.b

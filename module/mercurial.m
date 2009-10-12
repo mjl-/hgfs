@@ -1,5 +1,5 @@
-Mercurial: module {
-
+Mercurial: module
+{
 	PATH:	con "/dis/lib/mercurial.dis";
 	init:	fn();
 

@@ -40,7 +40,7 @@ Otherwise,
 .B hg/fs
 looks for a directory
 .BI .hg ,
-first in the current directory and then upwards towards the root of the file system.
+first in the current directory and then up towards the root of the file system.
 .SS Files
 .TP
 .B lastrev
@@ -49,6 +49,24 @@ Read latest revision.
 .BI files/ n / ...
 Access file hierarchy of revision
 .IR n .
+.TP
+.B changes/...
+For each file, read the revisions the file was changed in.  Each
+revision is on a separate line with 7 fields:
+.I "repository revision" ,
+the file's
+.I "revision"
+and
+.I "nodeid" ,
+first parent's
+.I revision
+and
+.I nodeid
+and second parent's
+.I revision
+and
+.I nodeid .
+Absent parents are indicated by revision ``-1'' and an empty nodeid.
 .TP
 .BI log/ n
 Read the log message for revision
