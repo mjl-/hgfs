@@ -36,9 +36,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg->setusage(arg->progname()+" [-d] base patch1 ...");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();

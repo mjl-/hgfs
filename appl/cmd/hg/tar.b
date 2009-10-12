@@ -19,6 +19,8 @@ HgTar: module {
 
 dflag: int;
 vflag: int;
+revision := -1;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -27,9 +29,6 @@ init(nil: ref Draw->Context, args: list of string)
 	str = load String String->PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
-
-	revision := -1;
-	hgpath := "";
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dv] [-r rev] [-h path]");
@@ -45,14 +44,18 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args != 0)
 		arg->usage();
 
-	(repo, rerr) := Repo.find(hgpath);
-	if(rerr != nil)
-		fail(rerr);
-	say("found repo");
+	{ init0(); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
 
-	(change, manifest, merr) := repo.manifest(revision);
-	if(merr != nil)
-		fail(merr);
+init0()
+{
+	repo := Repo.xfind(hgpath);
+	say("found repo");
+	(change, manifest) := repo.xmanifest(revision);
 	say("have change & manifest");
 
 	if(vflag) {
@@ -68,12 +71,8 @@ init(nil: ref Draw->Context, args: list of string)
 	for(l := manifest.files; l != nil; l = tl l) {
 		file := hd l;
 		say(sprint("reading file %q, nodeid %q", file.path, file.nodeid));
-		(rl, rlerr) := repo.openrevlog(file.path);
-		if(rlerr != nil)
-			fail(rlerr);
-		(d, derr) := rl.getnodeid(file.nodeid);
-		if(derr != nil)
-			fail(derr);
+		rl := repo.xopenrevlog(file.path);
+		d := rl.xgetnodeid(file.nodeid);
 		say("file read...");
 		say(sprint("%q, %q: %d bytes\n", file.nodeid, file.path, len d));
 

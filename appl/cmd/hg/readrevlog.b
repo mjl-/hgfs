@@ -30,9 +30,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg->setusage(arg->progname()+" [-d] path");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();
@@ -40,23 +38,20 @@ init(nil: ref Draw->Context, args: list of string)
 		arg->usage();
 	path := hd args;
 
-	(rl, err) := Revlog.open(path, 0);
-	if(err != nil)
-		fail(err);
-
-	last: int;
-	(last, err) = rl.lastrev();
-	if(err != nil)
-		fail(err);
-
-	e: ref Entry;
-	for(i := 0; i <= last; i++) {
-		(e, err) = rl.find(i);
-		if(err != nil)
-			fail(err);
-		#sys->print("entry %d:\n", i);
-		sys->print("%s\n", e.text());
+	{ init0(path); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
 	}
+}
+
+init0(path: string)
+{
+	rl := Revlog.xopen(path, 0);
+	last := rl.xlastrev();
+
+	for(i := 0; i <= last; i++)
+		sys->print("%s\n", rl.xfind(i).text());
 }
 
 fail(s: string)

@@ -19,6 +19,9 @@ HgLog: module {
 
 dflag: int;
 vflag: int;
+revision := -1;
+hgpath := "";
+showcount := -1;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -27,10 +30,6 @@ init(nil: ref Draw->Context, args: list of string)
 	str = load String String->PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
-
-	revision := -1;
-	hgpath := "";
-	showcount := -1;
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dv] [-r rev] [-n count] [-h path]");
@@ -47,26 +46,27 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args != 0)
 		arg->usage();
 
-	(repo, rerr) := Repo.find(hgpath);
-	if(rerr != nil)
-		fail(rerr);
+	{ init0(); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
+
+init0()
+{
+	repo := Repo.xfind(hgpath);
 	say("found repo");
 
-	if(revision == -1) {
-		err: string;
-		(revision, err) = repo.lastrev();
-		if(err != nil)
-			fail("look for last revision: "+err);
-	}
+	if(revision == -1)
+		revision = repo.xlastrev();
 
 	if(showcount == -1)
 		showcount = revision+1;
 	last := revision-showcount+1;
 	first := 1;
 	for(r := revision; r >= last; r--) {
-		(change, cerr) := repo.change(r);
-		if(cerr != nil)
-			fail("reading change: "+cerr);
+		change := repo.xchange(r);
 
 		if(first)
 			first = 0;

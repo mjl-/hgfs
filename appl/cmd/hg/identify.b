@@ -24,6 +24,7 @@ HgIdentify: module {
 
 
 dflag: int;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -35,8 +36,6 @@ init(nil: ref Draw->Context, args: list of string)
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
-
-	hgpath := "";
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path]");
@@ -50,26 +49,22 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args != 0)
 		arg->usage();
 
-	(repo, err) := Repo.find(hgpath);
-	if(err != nil)
-		fail(err);
+	{ init0(); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
 
-	ds: ref Dirstate;
-	(ds, err) = repo.dirstate();
-	if(err != nil)
-		fail("dirstate: "+err);
+init0()
+{
+	repo := Repo.xfind(hgpath);
+	ds := repo.xdirstate();
 	if(ds.p2 != hg->nullnode)
-		fail("checkout has two parents, is in merge, refusing to update");
+		error("checkout has two parents, is in merge, refusing to update");
 
-	branch: string;
-	(branch, err) = repo.workbranch();
-	if(err != nil)
-		fail(err);
-
-	tags: list of ref Tag;
-	(tags, err) = repo.revtags(ds.p1);
-	if(err != nil)
-		fail(err);
+	branch := repo.xworkbranch();
+	tags := repo.xrevtags(ds.p1);
 	revtags: list of string;
 	for(l := tags; l != nil; l = tl l)
 		revtags = (hd l).name::revtags;
@@ -83,4 +78,9 @@ init(nil: ref Draw->Context, args: list of string)
 	if(revtags != nil)
 		s += " "+join(revtags, "/");
 	sys->print("%s\n", s);
+}
+
+error(s: string)
+{
+	raise "hg:"+s;
 }

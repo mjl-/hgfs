@@ -21,6 +21,7 @@ HgStatus: module {
 
 
 dflag: int;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -31,8 +32,6 @@ init(nil: ref Draw->Context, args: list of string)
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
-
-	hgpath := "";
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path]");
@@ -46,19 +45,19 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args != 0)
 		arg->usage();
 
-	(repo, rerr) := Repo.find(hgpath);
-	if(rerr != nil)
-		fail(rerr);
+	{ init0(); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
 
+init0()
+{
+	repo := Repo.xfind(hgpath);
 	root := repo.workroot();
-	(wds, err) := hg->workdirstate(root);
-	if(err != nil)
-		fail("workdirstate: "+err);
-
-	ds: ref Dirstate;
-	(ds, err) = repo.dirstate();
-	if(err != nil)
-		fail("dirstate: "+err);
+	wds := hg->xworkdirstate(root);
+	ds := repo.xdirstate();
 
 	# first print status for all known files
 	dsf := l2a(ds.l);

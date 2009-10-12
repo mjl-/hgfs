@@ -19,6 +19,8 @@ HgGet: module {
 
 dflag: int;
 vflag: int;
+revision := -1;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -27,9 +29,6 @@ init(nil: ref Draw->Context, args: list of string)
 	str = load String String->PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
-
-	revision := -1;
-	hgpath := "";
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dv] [-r rev] [-h path]");
@@ -45,14 +44,18 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args != 0)
 		arg->usage();
 
-	(repo, rerr) := Repo.find(hgpath);
-	if(rerr != nil)
-		fail(rerr);
-	say("found repo");
+	{ init0();
+	} exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
 
-	(change, manifest, merr) := repo.manifest(revision);
-	if(merr != nil)
-		fail(merr);
+init0()
+{
+	repo := Repo.xfind(hgpath);
+	say("found repo");
+	(change, manifest) := repo.xmanifest(revision);
 	say("have change & manifest");
 
 	if(vflag) {
@@ -68,24 +71,18 @@ init(nil: ref Draw->Context, args: list of string)
 	for(l := manifest.files; l != nil; l = tl l) {
 		file := hd l;
 		say(sprint("reading file %q, nodeid %q", file.path, file.nodeid));
-		(rl, rlerr) := repo.openrevlog(file.path);
-		if(rlerr != nil)
-			fail(rlerr);
-		(d, derr) := rl.getnodeid(file.nodeid);
-		if(derr != nil)
-			fail(derr);
+		rl := repo.xopenrevlog(file.path);
+		d := rl.xgetnodeid(file.nodeid);
 		say("file read...");
 		warn(sprint("%q, %q: %d bytes\n", file.nodeid, file.path, len d));
 
-		(fd, err) := createfile(file.path);
-		if(fd == nil)
-			fail(sprint("creating %q: %s", file.path, err));
+		fd := xcreatefile(file.path);
 		if(sys->write(fd, d, len d) != len d)
-			fail(sprint("writing: %r"));
+			error(sprint("writing: %r"));
 	}
 }
 
-createdirs(dirs: string): string
+xcreatedirs(dirs: string)
 {
 	path := "";
 	for(l := sys->tokenize(dirs, "/").t1; l != nil; l = tl l) {
@@ -93,23 +90,24 @@ createdirs(dirs: string): string
 		say("createdirs, "+path[1:]);
 		sys->create(path[1:], Sys->OREAD, 8r777|Sys->DMDIR);
 	}
-	return nil;
 }
 
-createfile(path: string): (ref Sys->FD, string)
+xcreatefile(path: string): ref Sys->FD
 {
 	(dir, nil) := str->splitstrr(path, "/");
-	if(dir != nil) {
-		err := createdirs(dir);
-		if(err != nil)
-			return (nil, err);
-	}
+	if(dir != nil)
+		xcreatedirs(dir);
 
 	say("create, "+path);
 	fd := sys->create(path, Sys->OWRITE, 8r666);
 	if(fd == nil)
-		return (nil, sprint("create %q: %r", path));
-	return (fd, nil);
+		error(sprint("create %q: %r", path));
+	return fd;
+}
+
+error(s: string)
+{
+	raise "hg:"+s;
 }
 
 say(s: string)

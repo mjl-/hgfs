@@ -19,6 +19,7 @@ HgDirstate: module {
 
 dflag: int;
 vflag: int;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -28,15 +29,12 @@ init(nil: ref Draw->Context, args: list of string)
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
 
-	hgpath := "";
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dv] [-h path]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	dflag++;
-			if(dflag > 1)
-				hg->debug++;
+		'd' =>	hg->debug = dflag++;
 		'v' =>	vflag++;
 		'h' =>	hgpath = arg->earg();
 		* =>	arg->usage();
@@ -45,13 +43,17 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args != 0)
 		arg->usage();
 
-	(repo, rerr) := Repo.find(hgpath);
-	if(rerr != nil)
-		fail(rerr);
+	{ init0(); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
 
-	(ds, err) := repo.dirstate();
-	if(err != nil)
-		fail("dirstate: "+err);
+init0()
+{
+	repo := Repo.xfind(hgpath);
+	ds := repo.xdirstate();
 
 	if(vflag) {
 		sys->print("parents:");

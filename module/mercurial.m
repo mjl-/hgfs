@@ -23,7 +23,8 @@ Mercurial: module
 		files:	list of string;
 		msg:	string;
 
-		parse:	fn(data: array of byte, e: ref Entry): (ref Change, string);
+		parse:		fn(data: array of byte, e: ref Entry): (ref Change, string);
+		xparse:		fn(data: array of byte, e: ref Entry): ref Change;
 		findextra:	fn(c: self ref Change, k: string): (string, string);
 		text:	fn(c: self ref Change): string;
 	};
@@ -41,6 +42,7 @@ Mercurial: module
 		files:	list of ref Manifestfile;
 
 		parse:	fn(data: array of byte, n: string): (ref Manifest, string);
+		xparse:	fn(data: array of byte, n: string): ref Manifest;
 		find:	fn(m: self ref Manifest, path: string): ref Manifestfile;
 	};
 
@@ -67,6 +69,7 @@ Mercurial: module
 	};
 
 	workdirstate:	fn(path: string): (ref Dirstate, string);
+	xworkdirstate:	fn(path: string): ref Dirstate;
 
 
 	Tag: adt {
@@ -75,6 +78,7 @@ Mercurial: module
 		rev:	int;
 	};
 	parsetags:	fn(r: ref Repo, s: string): (list of ref Tag, string);
+	xparsetags:	fn(r: ref Repo, s: string): list of ref Tag;
 
 	Branch: adt {
 		name:	string;
@@ -94,6 +98,7 @@ Mercurial: module
 		nodeid:	string;
 
 		parse:	fn(buf: array of byte, index: int): (ref Entry, string);
+		xparse:	fn(buf: array of byte, index: int): ref Entry;
 		text:	fn(e: self ref Entry): string;
 	};
 
@@ -125,16 +130,26 @@ Mercurial: module
 		imtime:	int;
 
 		open:		fn(path: string, cacheall: int): (ref Revlog, string);
+		xopen:		fn(path: string, cacheall: int): ref Revlog;
 		get:		fn(rl: self ref Revlog, rev: int): (array of byte, string);
+		xget:		fn(rl: self ref Revlog, rev: int): array of byte;
 		getnodeid:	fn(rl: self ref Revlog, n: string): (array of byte, string);
+		xgetnodeid:	fn(rl: self ref Revlog, n: string): array of byte;
 		lastrev:	fn(rl: self ref Revlog): (int, string);
+		xlastrev:	fn(rl: self ref Revlog): int;
 		find:		fn(rl: self ref Revlog, rev: int): (ref Entry, string);
+		xfind:		fn(rl: self ref Revlog, rev: int): ref Entry;
 		findnodeid:	fn(rl: self ref Revlog, n: string): (ref Entry, string);
+		xfindnodeid:	fn(rl: self ref Revlog, n: string): ref Entry;
 		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
+		xdelta:		fn(rl: self ref Revlog, prev, rev: int): array of byte;
 		pread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): (array of byte, string);
+		xpread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): array of byte;
 		length:		fn(rl: self ref Revlog, rev: int): (big, string);
+		xlength:	fn(rl: self ref Revlog, rev: int): big;
 
 		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
+		xentries:	fn(rl: self ref Revlog): array of ref Entry;
 		isindexonly:	fn(rl: self ref Revlog): int;
 	};
 
@@ -150,29 +165,49 @@ Mercurial: module
 		ml:		ref Revlog;
 
 		open:		fn(path: string): (ref Repo, string);
+		xopen:		fn(path: string): ref Repo;
 		find:		fn(path: string): (ref Repo, string);
+		xfind:		fn(path: string): ref Repo;
 		name:		fn(r: self ref Repo): string;
 		openrevlog:	fn(r: self ref Repo, path: string): (ref Revlog, string);
+		xopenrevlog:	fn(r: self ref Repo, path: string): ref Revlog;
 		manifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest, string);
+		xmanifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest);
 		lastrev:	fn(r: self ref Repo): (int, string);
+		xlastrev:	fn(r: self ref Repo): int;
 		change:		fn(r: self ref Repo, rev: int): (ref Change, string);
+		xchange:	fn(r: self ref Repo, rev: int): ref Change;
 		mtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): (int, string);
+		xmtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): int;
 		dirstate:	fn(r: self ref Repo): (ref Dirstate, string);
+		xdirstate:	fn(r: self ref Repo): ref Dirstate;
 		writedirstate:	fn(r: self ref Repo, ds: ref Dirstate): string;
+		xwritedirstate:	fn(r: self ref Repo, ds: ref Dirstate);
 		workroot:	fn(r: self ref Repo): string;
 		tags:		fn(r: self ref Repo): (list of ref Tag, string);
+		xtags:		fn(r: self ref Repo): list of ref Tag;
 		revtags:	fn(r: self ref Repo, revstr: string): (list of ref Tag, string);
+		xrevtags:	fn(r: self ref Repo, revstr: string): list of ref Tag;
 		branches:	fn(r: self ref Repo): (list of ref Branch, string);
+		xbranches:	fn(r: self ref Repo): list of ref Branch;
 		workbranch:	fn(r: self ref Repo): (string, string);
+		xworkbranch:	fn(r: self ref Repo): string;
 		writeworkbranch:	fn(r: self ref Repo, b: string): string;
+		xwriteworkbranch:	fn(r: self ref Repo, b: string);
 		heads:		fn(r: self ref Repo): (array of ref Entry, string);
+		xheads:		fn(r: self ref Repo): array of ref Entry;
 		changelog:	fn(r: self ref Repo): (ref Revlog, string);
+		xchangelog:	fn(r: self ref Repo): ref Revlog;
 		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
+		xmanifestlog:	fn(r: self ref Repo): ref Revlog;
 		lookup:		fn(r: self ref Repo, rev: string): (int, string, string);
+		xlookup:	fn(r: self ref Repo, rev: string): (int, string);
 		get:		fn(r: self ref Repo, revstr, path: string): (array of byte, string);
+		xget:		fn(r: self ref Repo, revstr, path: string): array of byte;
 
 		escape:		fn(r: self ref Repo, path: string): string;
 		unescape:	fn(r: self ref Repo, path: string): (string, string);
+		xunescape:	fn(r: self ref Repo, path: string): string;
 		storedir:	fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;
@@ -191,8 +226,10 @@ Mercurial: module
 		l:	list of ref Hunk;
 
 		parse:	fn(d: array of byte): (ref Patch, string);
+		xparse:	fn(d: array of byte): ref Patch;
 		apply:	fn(p: self ref Patch, d: array of byte): array of byte;
 		applymany:	fn(base: array of byte, patches: array of array of byte): (array of byte, string);
+		xapplymany:	fn(base: array of byte, patches: array of array of byte): array of byte;
 		sizediff:	fn(h: self ref Patch): int;
 		text:	fn(h: self ref Patch): string;
 	};

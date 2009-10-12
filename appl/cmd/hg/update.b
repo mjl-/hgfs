@@ -26,6 +26,7 @@ HgUpdate: module {
 dflag: int;
 Cflag: int;
 repo: ref Repo;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -37,8 +38,6 @@ init(nil: ref Draw->Context, args: list of string)
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
-
-	hgpath := "";
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [-C] [rev]");
@@ -56,46 +55,34 @@ init(nil: ref Draw->Context, args: list of string)
 	if(len args == 1)
 		revstr = hd args;
 
-	err: string;
-	(repo, err) = Repo.find(hgpath);
-	if(err != nil)
-		fail(err);
+	{ init0(revstr); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
+	}
+}
 
-	ds: ref Dirstate;
-	(ds, err) = repo.dirstate();
-	if(err != nil)
-		fail("dirstate: "+err);
+init0(revstr: string)
+{
+	repo = Repo.xfind(hgpath);
+	ds := repo.xdirstate();
 	if(ds.p2 != hg->nullnode)
-		fail("checkout has two parents, is in merge, refusing to update");
-	orev: int;
+		error("checkout has two parents, is in merge, refusing to update");
 	onodeid := ds.p1;
-	(orev, nil, err) = repo.lookup(onodeid);
-	if(err != nil)
-		fail("getting current revision: "+err);
+	(orev, nil) := repo.xlookup(onodeid);
 	say(sprint("current rev %d nodeid %q", orev, onodeid));
 
-	rev: int;
-	nodeid: string;
-	(rev, nodeid, err) = repo.lookup(revstr);
-	if(rev < 0 && err == nil)
-		err = sprint("no such revision %#q", revstr);
-	if(err != nil)
-		fail(err);
+	(rev, nodeid) := repo.xlookup(revstr);
+	if(rev < 0)
+		error(sprint("no such revision %#q", revstr));
 	say(sprint("new rev %d nodeid %q, revstr %q", rev, nodeid, revstr));
 
-	om, nm: ref Manifest;
-	oc, nc: ref Change;
-	(oc, om, err) = repo.manifest(orev);
-	(nc, nm, err) = repo.manifest(rev);
+	(oc, om) := repo.xmanifest(orev);
+	(nc, nm) := repo.xmanifest(rev);
 
-	obranch, nbranch, wbranch: string;
-	(obranch, err) = oc.findextra("branch");
-	if(err == nil)
-		(nbranch, err) = nc.findextra("branch");
-	if(err == nil)
-		(wbranch, err) = repo.workbranch();
-	if(err != nil)
-		fail(err);
+	(nil, obranch) := oc.findextra("branch");
+	(nil, nbranch) := nc.findextra("branch");
+	wbranch := repo.xworkbranch();
 	if(obranch == nil) obranch = "default";
 	if(nbranch == nil) nbranch = "default";
 
@@ -120,9 +107,9 @@ init(nil: ref Draw->Context, args: list of string)
 		hg->STnormal =>
 			omf := omtab.find(e.path);
 			if(omf == nil)
-				fail(sprint("%#q in dirstate but not in manifest", e.path));
+				error(sprint("%#q in dirstate but not in manifest", e.path));
 			if(!Cflag && hg->differs(repo, big e.size, e.mtime, omf))
-				fail(sprint("%#q has been modified, refusing to update", e.path));
+				error(sprint("%#q has been modified, refusing to update", e.path));
 		* =>
 			raise "missing case";
 		}
@@ -143,7 +130,7 @@ init(nil: ref Draw->Context, args: list of string)
 			oi++;
 		} else if(np != nil && np < op || op == nil) {
 			if(!Cflag && exists(np) && hg->differs(repo, big -1, -1, nfiles[ni]))
-				fail(sprint("%#q is in new revision, not in old, but is different from new version", np));
+				error(sprint("%#q is in new revision, not in old, but is different from new version", np));
 			ni++;
 		} else if(op < np || np == nil) {
 			oi++;
@@ -183,14 +170,9 @@ init(nil: ref Draw->Context, args: list of string)
 	}
 
 	nds.l = util->rev(nds.l);
-	err = repo.writedirstate(nds);
-	if(err != nil)
-		fail("writing new dirstate: "+err);
-	if(obranch != nbranch || nbranch != wbranch) {
-		err = repo.writeworkbranch(nbranch);
-		if(err != nil)
-			fail(err);
-	}
+	repo.xwritedirstate(nds);
+	if(obranch != nbranch || nbranch != wbranch)
+		repo.xwriteworkbranch(nbranch);
 }
 
 removedirs(mf: array of ref Manifestfile, p: string)
@@ -251,6 +233,11 @@ dsadd(ds: ref Dirstate, path: string)
 		fail(sprint("stat %q: %r", path));
 	dsf := ref Dirstatefile (hg->STnormal, dir.mode&8r777, int dir.length, dir.mtime, path, nil);
 	ds.l = dsf::ds.l;
+}
+
+error(s: string)
+{
+	raise "hg:"+s;
 }
 
 say(s: string)
