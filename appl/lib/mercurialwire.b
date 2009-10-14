@@ -15,6 +15,8 @@ include "filter.m";
 include "tables.m";
 	tables: Tables;
 	Strhash: import tables;
+include "filtertool.m";
+	filtertool: Filtertool;
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change, Manifest: import hg;
@@ -28,6 +30,7 @@ init()
 	lists = load Lists Lists->PATH;
 	deflate = load Filter Filter->DEFLATEPATH;
 	deflate->init();
+	filtertool = load Filtertool Filtertool->PATH;
 	tables = load Tables Tables->PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
@@ -178,11 +181,9 @@ between0(r: ref Repo, pair: string): string
 lookup(r: ref Repo, key: string): (string, string)
 {
 	{
-		(nil, n, err) := r.lookup(key);
+		(nil, n, err) := r.lookup(key, 1);
 		if(err != nil)
 			error(err);
-		if(n == nil)
-			error(sprint("unknown revision %#q", key));
 		return (n, nil);
 	} exception e {
 	"hgwire:*" =>	return (nil, e[len "hgwire:":]);
@@ -330,7 +331,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 			say(sprint("\t%s", sel[i].text()));
 
 	err: string;
-	(out, err) = pushfilter(deflate, "z0", out);
+	(out, err) = filtertool->push(deflate, "z0", out, 1);
 	if(err != nil)
 		error("init deflate: "+err);
 
@@ -409,8 +410,10 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, centries, mentries, sel: array o
 		ewrite(out, hdr);
 		ewrite(out, delta);
 
-		for(fl := m.files; fl != nil; fl = tl fl)
-			tree.add((hd fl).path, (hd fl).nodeid);
+		for(j := 0; j < len m.files; j++) {
+			mf := m.files[j];
+			tree.add(mf.path, mf.nodeid);
+		}
 	}
 	eogroup(out);
 
@@ -547,53 +550,6 @@ ewrite(fd: ref Sys->FD, d: array of byte)
 	} exception e {
 	"write on closed pipe" =>
 		error("write "+e);
-	}
-}
-
-pushfilter(f: Filter, params: string, out: ref Sys->FD): (ref Sys->FD, string)
-{
-	if(sys->pipe(fds := array[2] of ref Sys->FD) < 0)
-		return (nil, sprint("pipe: %r"));
-
-	spawn tunnel(f, params, fds[1], out, pidc := chan of int);
-	<-pidc;
-	return (fds[0], nil);
-}
-
-tunnel(f: Filter, params: string, in, out: ref Sys->FD, pidc: chan of int)
-{
-	pidc <-= sys->pctl(Sys->NEWFD, in.fd::out.fd::2::nil);
-	in = sys->fildes(in.fd);
-	out = sys->fildes(out.fd);
-
-	rqc := f->start(params);
-	for(;;)
-	pick rq := <-rqc {
-	Start =>
-		;
-	Fill =>
-		n := sys->read(in, rq.buf, len rq.buf);
-		rq.reply <-= n;
-		if(n < 0) {
-			warn(sprint("read: %r"));
-			return;
-		}
-	Result =>
-		if(sys->write(out, rq.buf, len rq.buf) != len rq.buf) {
-			warn(sprint("write: %r"));
-			return;
-		}
-		rq.reply <-= 0;
-	Finished =>
-		if(len rq.buf != 0)
-			warn(sprint("%d leftover bytes", len rq.buf));
-		return;
-	Info =>
-		# rq.msg
-		;
-	Error =>
-		warn("error: "+rq.e);
-		return;
 	}
 }
 

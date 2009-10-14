@@ -61,15 +61,15 @@ init0()
 	if(vflag) {
 		warn(sprint("%s\n", change.text()));
 		warn(sprint("manifest:\n"));
-		for(l := manifest.files; l != nil; l = tl l) {
-			file := hd l;
+		for(i := 0; i < len manifest.files; i++) {
+			file := manifest.files[i];
 			warn(sprint("%q %q\n", file.nodeid, file.path));
 		}
 		warn("\n");
 	}
 
-	for(l := manifest.files; l != nil; l = tl l) {
-		file := hd l;
+	for(i := 0; i < len manifest.files; i++) {
+		file := manifest.files[i];
 		say(sprint("reading file %q, nodeid %q", file.path, file.nodeid));
 		rl := repo.xopenrevlog(file.path);
 		d := rl.xgetnodeid(file.nodeid);

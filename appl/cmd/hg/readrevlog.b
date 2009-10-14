@@ -12,11 +12,13 @@ include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change: import hg;
 
-dflag: int;
-
 HgReadrevlog: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
+
+
+dflag: int;
+vflag: int;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -27,10 +29,11 @@ init(nil: ref Draw->Context, args: list of string)
 	hg->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] path");
+	arg->setusage(arg->progname()+" [-dv] path");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	hg->debug = dflag++;
+		'v' =>	vflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();
@@ -50,8 +53,14 @@ init0(path: string)
 	rl := Revlog.xopen(path, 0);
 	last := rl.xlastrev();
 
-	for(i := 0; i <= last; i++)
-		sys->print("%s\n", rl.xfind(i).text());
+	for(i := 0; i <= last; i++) {
+		sys->print("# %s:\n", rl.xfind(i).text());
+		if(vflag) {
+			data := rl.xget(i);
+			if(sys->write(sys->fildes(1), data, len data) != len data)
+				fail(sprint("write: %r"));
+		}
+	}
 }
 
 fail(s: string)

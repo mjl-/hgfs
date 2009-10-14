@@ -6,6 +6,8 @@ include "sys.m";
 include "draw.m";
 include "arg.m";
 include "bufio.m";
+include "daytime.m";
+	daytime: Daytime;
 include "string.m";
 	str: String;
 include "mercurial.m";
@@ -18,48 +20,46 @@ HgHeads: module {
 
 
 dflag: int;
+vflag: int;
+hgpath := "";
 
 init(nil: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
+	daytime = load Daytime Daytime->PATH;
 	str = load String String->PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init();
 
-	hgpath := "";
-
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] [-h path]");
+	arg->setusage(arg->progname()+" [-d] [-h path] [-v]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	hg->debug = dflag++;
 		'h' =>	hgpath = arg->earg();
+		'v' =>	vflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();
 	if(len args != 0)
 		arg->usage();
 
-	(r, err) := Repo.find(hgpath);
-	if(err != nil)
-		fail(err);
-
-	entries: array of ref Entry;
-	(entries, err) = r.heads();
-	if(err != nil)
-		fail(err);
-
-	for(i := 0; i < len entries; i++) {
-		e := entries[i];
-		sys->print("%q, rev %d", e.nodeid, e.rev);
-		if(e.p1 >= 0) {
-			if(e.p2 >= 0)
-				sys->print(", parents %d %d\n", e.p1, e.p2);
-			else
-				sys->print(", parent %d\n", e.p1);
-		}
+	{ init0(); }
+	exception e {
+	"hg:*" =>
+		fail(e[3:]);
 	}
+}
+
+init0()
+{
+	repo := Repo.xfind(hgpath);
+	ents := repo.xchangelog().xentries();
+	heads := repo.xheads();
+
+	for(i := len heads-1; i >= 0; i--)
+		sys->print("%s\n", hg->xentrylogtext(repo, ents, heads[i], vflag));
 }
 
 fail(s: string)

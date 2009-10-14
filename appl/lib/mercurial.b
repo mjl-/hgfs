@@ -6,8 +6,12 @@ include "sys.m";
 include "bufio.m";
 	bufio: Bufio;
 	Iobuf: import bufio;
+include "env.m";
+	env: Env;
 include "filter.m";
 	inflate: Filter;
+include "filtertool.m";
+	filtertool: Filtertool;
 include "keyring.m";
 	keyring: Keyring;
 	DigestState: import keyring;
@@ -17,11 +21,10 @@ include "daytime.m";
 	daytime: Daytime;
 include "util0.m";
 	util: Util0;
-	max, l2a, readfile, writefile: import util;
+	p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
 include "mercurial.m";
 
 
-Entrysize:	con 64;
 Cachemax:	con 64;  # max number of cached items in a revlog
 
 init()
@@ -29,11 +32,13 @@ init()
 	sys = load Sys Sys->PATH;
 	bufio = load Bufio Bufio->PATH;
 	bufio->open("/dev/null", Bufio->OREAD); # xxx ensure bufio is properly initialized
+	env = load Env Env->PATH;
 	keyring = load Keyring Keyring->PATH;
 	str = load String String->PATH;
 	daytime = load Daytime Daytime->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
+	filtertool = load Filtertool Filtertool->PATH;
 	util = load Util0 Util0->PATH;
 	util->init();
 }
@@ -88,10 +93,8 @@ differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
 {
 	path := mf.path;
 	(ok, dir) := sys->stat(path);
-	if(ok != 0) {
-		warn(sprint("stat %q: %r", path));
+	if(ok != 0)
 		return 1;
-	}
 	mfx := (mf.flags & Fexec) != 0;
 	fx := (dir.mode & 8r100) != 0;
 	if(mfx != fx)
@@ -100,10 +103,8 @@ differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
 		return 0;
 
 	buf := readfile(path, -1);
-	if(buf == nil) {
-		warn(sprint("read %q: %r", path));
+	if(buf == nil)
 		return 1;
-	}
 
 	e, e1, e2: ref Entry;
 	(rl, err) := repo.openrevlog(path);
@@ -125,6 +126,140 @@ differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
 	n: string;
 	(n, err) = createnodeid(buf, n1, n2);
 	return err != nil || mf.nodeid != n;
+}
+
+escape(s: string): string
+{
+	fa := array of byte s;
+	res: string;
+	for(i := 0; i < len fa; i++) {
+		case int fa[i] {
+		'_' =>
+			res += "__";
+		'A' to 'Z' =>
+			res[len res] = '_';
+			res[len res] = int fa[i]+'a'-'A';
+		126 to 255 or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' =>
+			res[len res] = '~';
+			res += sprint("%02x", int fa[i]);
+		* =>
+			res[len res] = int fa[i];
+		}
+	}
+	return res;
+}
+
+xsanitize(s: string): string
+{
+	slash := str->prefix("/", s);
+	r: list of string;
+	for(l := sys->tokenize(s, "/").t1; l != nil; l = tl l)
+		case hd l {
+		"." =>	;
+		".." =>
+			if(r == nil)
+				error("bogus .. in path");
+			r = tl r;
+		* =>
+			r = hd l::r;
+		}
+	s = "";
+	for(l = rev(r); l != nil; l = tl l)
+		s += "/"+hd l;
+	if(s != nil)
+		s = s[1:];
+	if(slash)
+		s = "/"+s;
+	if(s == nil)
+		s = ".";
+	return s;
+}
+
+ensuredirs(base, path: string)
+{
+	s := base;
+	for(l := sys->tokenize(str->splitstrr(path, "/").t0, "/").t1; l != nil; l = tl l) {
+		s += "/"+hd l;
+		if(sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR) == nil)
+			say(sprint("create %q failed: %r", s));
+	}
+}
+
+xreaduser(r: ref Repo): string
+{
+	c := xreadconfigs(r);
+	(has, user) := c.find("ui", "username");
+	if(!has)
+		 user = sprint("%s@%s", string readfile("/dev/user", -1), string readfile("/dev/sysname", -1));
+	return user;
+}
+
+dumpconfigs(c: ref Configs)
+{
+	say("configs:");
+	for(l := c.l; l != nil; l = tl l) {
+		say("config:");
+		cc := hd l;
+		for(ll := cc.l; ll != nil; ll = tl ll) {
+			sec := hd ll;
+			say(sprint("section %q", sec.name));
+			for(p := sec.l; p != nil; p = tl p)
+				say(sprint("%s = %q", (hd p).t0, (hd p).t1));
+			say("");
+		}
+		say("");
+	}
+}
+
+xreadconfigs(r: ref Repo): ref Configs
+{
+	c0 := xreadconfig(env->getenv("home")+"/lib/hgrc");
+	c1 := r.xreadconfig();
+	c := ref Configs;
+	if(c1 != nil)
+		c.l = c1::c.l;
+	if(c0 != nil)
+		c.l = c0::c.l;
+	#dumpconfigs(c);
+	return c;
+}
+
+
+xentrylogtext(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int): string
+{
+	ch := r.xchange(e.rev);
+	s := "";
+	s += entrylogkey("changeset", sprint("%d:%s", e.rev, e.nodeid[:12]));
+	(k, branch) := ch.findextra("branch");
+	if(k != nil)
+		s += entrylogkey("branch", branch);
+	for(tags := r.xrevtags(e.nodeid); tags != nil; tags = tl tags)
+		s += entrylogkey("tag", (hd tags).name);
+	if((e.p1 >= 0 && e.p1 != e.rev-1) || (e.p2 >= 0 && e.p2 != e.rev-1)) {
+		if(e.p1 >= 0)
+			s += entrylogkey("parent", sprint("%d:%s", ents[e.p1].rev, ents[e.p1].nodeid[:12]));
+		if(e.p2 >= 0)
+			s += entrylogkey("parent", sprint("%d:%s", ents[e.p2].rev, ents[e.p2].nodeid[:12]));
+	}
+	s += entrylogkey("user", ch.who);
+	s += entrylogkey("date", sprint("%s %+d", daytime->text(daytime->gmt(ch.when+ch.tzoff)), ch.tzoff));
+	if(verbose) {
+		files := "";
+		for(l := ch.files; l != nil; l = tl l)
+			files += sprint(" %q", hd l);
+		if(files != nil)
+			files = files[1:];
+		s += entrylogkey("files", files);
+		s += "description:\n"+ch.msg;
+	} else
+		s += entrylogkey("summary", str->splitstrl(ch.msg, "\n").t0);
+	s += "\n";
+	return s;
+}
+
+entrylogkey(k, v: string): string
+{
+	return sprint("%-12s %s\n", k+":", v);
 }
 
 getline(b: ref Iobuf): string
@@ -262,6 +397,21 @@ split(buf: array of byte, b: byte): (array of byte, array of byte)
 	return (buf, array[0] of byte);
 }
 
+Manifest.xpack(m: self ref Manifest): array of byte
+{
+	s := "";
+	for(i := 0; i < len m.files; i++) {
+		mf := m.files[i];
+		s += mf.path+"\0"+mf.nodeid;
+		if(mf.flags & Flink)
+			s += "l";
+		if(mf.flags & Fexec)
+			s += "x";
+		s += "\n";
+	}
+	return array of byte s;
+}
+
 Manifest.parse(d: array of byte, n: string): (ref Manifest, string)
 {
 	{ return (Manifest.xparse(d, n), nil); } exception e { "hg:*" => return (nil, e[3:]); }
@@ -291,16 +441,38 @@ Manifest.xparse(d: array of byte, n: string): ref Manifest
 		mf := ref Manifestfile(string path, 0, string nodeid, flags);
 		files = mf::files;
 	}
-	files = util->rev(files);
-	return ref Manifest(n, files);
+	return ref Manifest(n, l2a(util->rev(files)));
 }
 
 Manifest.find(m: self ref Manifest, path: string): ref Manifestfile
 {
-	for(l := m.files; l != nil; l = tl l)
-		if((hd l).path == path)
-			return hd l;
+	for(i := 0; i < len m.files; i++)
+		if(m.files[i].path == path)
+			return m.files[i];
 	return nil;
+}
+
+Manifest.add(m: self ref Manifest, mf: ref Manifestfile)
+{
+	for(i := 0; i < len m.files; i++)
+		if(mf.path < m.files[i].path)
+			break;
+	nf := array[len m.files+1] of ref Manifestfile;
+	nf[:] = m.files[:i];
+	nf[i] = mf;
+	nf[i+1:] = m.files[i:];
+	m.files = nf;
+}
+
+Manifest.del(m: self ref Manifest, path: string): int
+{
+	for(i := 0; i < len m.files; i++)
+		if(m.files[i].path == path) {
+			m.files[i:] = m.files[i+1:];
+			m.files = m.files[:len m.files-1];
+			return 1;
+		}
+	return 0;
 }
 
 xreopen(rl: ref Revlog)
@@ -434,7 +606,7 @@ say(sprint("reconstruct, len base %d, len patches %d, e.rev %d", len base, len p
 
 	n := xcreatenodeid(d, pn1, pn2);
 	if(n != e.nodeid)
-		error(sprint("nodeid mismatch, have %q, header claims %q, (p1 %q p2 %q, len %d, entry %s)", n, e.nodeid, pn1, pn2, len d, e.text()));
+		error(sprint("nodeid mismatch in %q, have %q, header claims %q, (p1 %q p2 %q, len %d, entry %s)", rl.path, n, e.nodeid, pn1, pn2, len d, e.text()));
 	rl.fullrev = e.rev;
 	rl.full = d;
 	return d;
@@ -448,7 +620,7 @@ xdecompress(d: array of byte): array of byte
 	case int d[0] {
 	'u' =>	return d[1:];
 	0 =>	return d;
-	* =>	return xinflatebuf(d);
+	* =>	return xinflate(d);
 	}
 }
 
@@ -576,11 +748,6 @@ xget(rl: ref Revlog, e: ref Entry, withmeta: int): array of byte
 	return d;
 }
 
-xgetlength(rl: ref Revlog, e: ref Entry): big
-{
-	return big len xget(rl, e, 0);
-}
-
 Revlog.xget(rl: self ref Revlog, rev: int): array of byte
 {
 	e := rl.xfind(rev);
@@ -620,17 +787,23 @@ Revlog.xdelta(rl: self ref Revlog, prev, rev: int): array of byte
 	#say(sprint("delta with full contents, start %d end %d size %d, e %s", 0, obuflen, len buf, e.text()));
 	delta := array[3*4+len buf] of byte;
 	o := 0;
-	o = p32(delta, o, 0); # start
-	o = p32(delta, o, obuflen); # end
-	o = p32(delta, o, len buf); # size
+	o = p32i(delta, o, 0); # start
+	o = p32i(delta, o, obuflen); # end
+	o = p32i(delta, o, len buf); # size
 	delta[o:] = buf;
 	return delta;
 }
 
 Revlog.xlength(rl: self ref Revlog, rev: int): big
 {
+	return big rl.xfind(rev).uncsize;
+}
+
+Revlog.xverify(rl: self ref Revlog)
+{
 	xreopen(rl);
-	return xgetlength(rl, rl.ents[rev]);
+	for(i := 0; i < len rl.ents; i++)
+		rl.xget(rl.ents[i].rev);
 }
 
 Revlog.xfind(rl: self ref Revlog, rev: int): ref Entry
@@ -754,24 +927,7 @@ Repo.escape(r: self ref Repo, path: string): string
 {
 	if(!r.isstore())
 		return path;
-
-	fa := array of byte path;
-	res: string;
-	for(i := 0; i < len fa; i++) {
-		case int fa[i] {
-		'_' =>
-			res += "__";
-		'A' to 'Z' =>
-			res[len res] = '_';
-			res[len res] = int fa[i]+'a'-'A';
-		126 to 255 or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' =>
-			res[len res] = '~';
-			res += sprint("%02x", int fa[i]);
-		* =>
-			res[len res] = int fa[i];
-		}
-	}
-	return res;
+	return escape(path);
 }
 
 Repo.xunescape(r: self ref Repo, path: string): string
@@ -883,12 +1039,16 @@ Repo.xdirstate(r: self ref Repo): ref Dirstate
 	path := r.path+"/dirstate";
 	b := bufio->open(path, Bufio->OREAD);
 	if(b == nil)
-		error(sprint("open %q: %r", path));
+		return ref Dirstate (nullnode, nullnode, nil);
 
-	n1 := b.read(p1 := array[20] of byte, len p1);
-	n2 := b.read(p2 := array[20] of byte, len p2);
-	if(n1 != len p1 || n2 != len p2)
+	n1 := b.read(p1d := array[20] of byte, len p1d);
+	n2 := b.read(p2d := array[20] of byte, len p2d);
+	if(n1 != len p1d || n2 != len p2d)
 		error(sprint("reading parents: %r"));
+	p1 := hex(p1d);
+	p2 := hex(p2d); 
+	if(p1 == nullnode && p2 != nullnode)
+		error(sprint("p1 nullnode but p2 not, %s", p2));
 
 	buf := array[1+4+4+4+4] of byte;
 	l: list of ref Dirstatefile;
@@ -924,8 +1084,7 @@ Repo.xdirstate(r: self ref Repo): ref Dirstate
 			}
 		l = dsf::l;
 	}
-	ds := ref Dirstate (hex(p1), hex(p2), util->rev(l));
-	return ds;
+	return ref Dirstate (p1, p2, util->rev(l));
 }
 
 Dirstate.packedsize(ds: self ref Dirstate): int
@@ -950,17 +1109,40 @@ Dirstate.pack(ds: self ref Dirstate, buf: array of byte)
 	for(l := ds.l; l != nil; l = tl l) {
 		f := hd l;
 		buf[o++] = byte statestrs[f.state][0];
-		o = p32(buf, o, f.mode);
-		o = p32(buf, o, f.size);
-		o = p32(buf, o, f.mtime);
+		o = p32i(buf, o, f.mode);
+		o = p32i(buf, o, f.size);
+		o = p32i(buf, o, f.mtime);
 		path := f.path;
 		if(f.origpath != nil)
 			path += "\0"+f.origpath;
 		pathbuf := array of byte path;
-		o = p32(buf, o, len pathbuf);
+		o = p32i(buf, o, len pathbuf);
 		buf[o:] = pathbuf;
 		o += len pathbuf;
 	}
+}
+
+Dirstate.find(ds: self ref Dirstate, path: string): ref Dirstatefile
+{
+	for(l := ds.l; l != nil; l = tl l)
+		if((hd l).path == path)
+			return hd l;
+	return nil;
+}
+
+Dirstate.findall(ds: self ref Dirstate, pp: string): list of ref Dirstatefile
+{
+	dir := pp+"/";
+	r: list of ref Dirstatefile;
+	for(l := ds.l; l != nil; l = tl l)
+		if((hd l).path == pp || str->prefix(dir, (hd l).path))
+			r = hd l::r;
+	return rev(r);
+}
+
+Dirstate.add(ds: self ref Dirstate, dsf: ref Dirstatefile)
+{
+	ds.l = dsf::ds.l;
 }
 
 Repo.xwritedirstate(r: self ref Repo, ds: ref Dirstate)
@@ -979,7 +1161,7 @@ Repo.xworkbranch(r: self ref Repo): string
 {
 	buf := readfile(r.path+"/branch", 1024);
 	if(buf == nil)
-		error(sprint("%r"));
+		return "default";
 	b := string buf;
 	if(b != nil && b[len b-1] == '\n')
 		b = b[:len b-1];
@@ -998,6 +1180,19 @@ Repo.workroot(r: self ref Repo): string
 	return r.path[:len r.path-len "/.hg"];
 }
 
+Repo.xworkdir(r: self ref Repo): string
+{
+	root := r.workroot();
+	cwd := sys->fd2path(sys->open(".", Sys->OREAD));
+	if(!str->prefix(root, cwd))
+		error(sprint("cannot determine current directory in repository, workroot %q, cwd %q", root, cwd));
+	base := cwd[len root:];
+	base = str->drop(base, "/");
+	if(base == nil)
+		base = ".";
+	return base;
+}
+
 Repo.xtags(r: self ref Repo): list of ref Tag
 {
 	cl := r.xchangelog();
@@ -1013,12 +1208,11 @@ Repo.xtags(r: self ref Repo): list of ref Tag
 
 Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 {
-	(rev, n) := r.xlookup(revstr);
-	if(n == nil)
-		error("no such revision");
+	(rev, n) := r.xlookup(revstr, 1);
 
 	cl := r.xchangelog();
 	ents := cl.xentries();
+		
 
 	el: list of ref Entry;
 	for(i := 0; i < len ents; i++) {
@@ -1040,6 +1234,8 @@ Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 				tags = t::tags;
 		}
 	}
+	if(len ents > 0 && ents[len ents-1].rev == rev)
+		tags = ref Tag ("tip", n, rev)::tags;
 	return tags;
 }
 
@@ -1181,9 +1377,9 @@ Repo.xmanifestlog(r: self ref Repo): ref Revlog
 	return r.ml;
 }
 
-Repo.xlookup(r: self ref Repo, s: string): (int, string)
+Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 {
-	if(s == "null")
+	if(s == "null" || s == nullnode)
 		return (-1, nullnode);
 
 	cl := r.xchangelog();
@@ -1237,14 +1433,14 @@ Repo.xlookup(r: self ref Repo, s: string): (int, string)
 		if((hd b).name == s)
 			return ((hd b).rev, (hd b).n);
 
+	if(need)
+		error(sprint("no such revision %#q", s));
 	return (-1, nil);
 }
 
 Repo.xget(r: self ref Repo, revstr, path: string): array of byte
 {
-	(rev, n) := r.xlookup(revstr);
-	if(n == nil)
-		error("no such revision");
+	(rev, nil) := r.xlookup(revstr, 1);
 	(nil, m) := r.xmanifest(rev);
 	mf := m.find(path);
 	if(mf == nil)
@@ -1285,8 +1481,8 @@ Dirstatefile.text(f: self ref Dirstatefile): string
 
 Hunk.text(h: self ref Hunk): string
 {
-	return sprint("<hunk s=%d e=%d length=%d buf=%q>", h.start, h.end, len h.buf, string h.buf);
-	#return sprint("<hunk s=%d e=%d length=%d>", h.start, h.end, len h.buf);
+	#return sprint("<hunk s=%d e=%d length=%d buf=%q>", h.start, h.end, len h.buf, string h.buf);
+	return sprint("<hunk s=%d e=%d length=%d>", h.start, h.end, len h.buf);
 }
 
 Patch.apply(p: self ref Patch, b: array of byte): array of byte
@@ -1415,7 +1611,7 @@ Patch.xapplymany(base: array of byte, patches: array of array of byte): array of
 			g = Group.apply(g, p);
 		} exception e {
 		"group:*" =>
-			error(e[len "group:":]);
+			error("bad patch: "+e[len "group:":]);
 		}
 	}
 	return g.flatten();
@@ -1465,13 +1661,40 @@ Patch.text(p: self ref Patch): string
 {
 	s: string;
 	for(l := p.l; l != nil; l = tl l)
-		s += sprint("%s ", (hd l).text());
+		s += sprint(" %s", (hd l).text());
 	if(s != nil)
 		s = s[1:];
 	return s;
 }
 
 nullentry: Entry;
+
+Entry.xpack(e: self ref Entry, buf: array of byte, indexonly: int)
+{
+	if(len buf < Entrysize)
+		error("short Entry buffer");
+	o := 0;
+	off := e.offset;
+	if(e.rev == 0) {
+		if(indexonly)
+			off |= big Indexonly<<32;
+		off |= big Version1<<16;
+	}
+	o = p48(buf, o, off);
+	o = p16(buf, o, e.flags);
+	o = p32i(buf, o, e.csize);
+	o = p32i(buf, o, e.uncsize);
+	o = p32i(buf, o, e.base);
+	o = p32i(buf, o, e.link);
+	o = p32i(buf, o, e.p1);
+	o = p32i(buf, o, e.p2);
+	buf[o:] = unhex(e.nodeid);
+	o += 20;
+	buf[o:] = array[12] of {* => byte 0};
+	o += 12;
+	if(o != Entrysize)
+		error("Entry.pack error");
+}
 
 Entry.parse(buf: array of byte, index: int): (ref Entry, string)
 {
@@ -1516,40 +1739,12 @@ Entry.text(e: self ref Entry): string
 }
 
 
-xinflatebuf(src: array of byte): array of byte
+xinflate(d: array of byte): array of byte
 {
-	l: list of array of byte;
-
-	total := 0;
-	rqch := inflate->start("z");
-	<-rqch;
-	for(;;) 
-	pick m := <-rqch {
-	Start =>
-		error("received another start message");
-	Fill =>
-		n := len src;
-		if(n > len m.buf)
-			n = len m.buf;
-		m.buf[:] = src[:n];
-		m.reply <-= n;
-		src = src[n:];
-	Result =>
-		buf := array[len m.buf] of byte;
-		buf[:] = m.buf;
-		l = buf::l;
-		total += len buf;
-		m.reply <-= 0;
-	Finished =>
-		if(len m.buf != 0)
-			error("inflatebuf: trailing bytes after inflating: "+hex(m.buf));
-		#say(sprint("received %d bytes total", total));
-		return flatten(total, util->rev(l));
-	Info =>
-		say("filter: "+m.msg);
-	Error =>
-		error("error from filter: "+m.e);
-	}
+	(nd, err) := filtertool->convert(inflate, "z", d);
+	if(err != nil)
+		error("decompress: "+err);
+	return nd;
 }
 
 flatten(total: int, l: list of array of byte): array of byte
@@ -1722,15 +1917,6 @@ breadn(b: ref Iobuf, buf: array of byte, e: int): int
 	return s;
 }
 
-p32(d: array of byte, o: int, v: int): int
-{
-	d[o++] = byte (v>>24);
-	d[o++] = byte (v>>16);
-	d[o++] = byte (v>>8);
-	d[o++] = byte (v>>0);
-	return o;
-}
-
 a2l[T](a: array of T): list of T
 {
 	l: list of T;
@@ -1878,9 +2064,9 @@ Repo.manifestlog(r: self ref Repo): (ref Revlog, string)
 	{ return (r.xmanifestlog(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
-Repo.lookup(r: self ref Repo, rev: string): (int, string, string)
+Repo.lookup(r: self ref Repo, rev: string, need: int): (int, string, string)
 {
-	{ (rr, n) := r.xlookup(rev); return (rr, n, nil); } exception e { "hg:*" => return (-1, nil, e[3:]); }
+	{ (rr, n) := r.xlookup(rev, need); return (rr, n, nil); } exception e { "hg:*" => return (-1, nil, e[3:]); }
 }
 
 Repo.get(r: self ref Repo, revstr, path: string): (array of byte, string)
@@ -1893,6 +2079,107 @@ Repo.unescape(r: self ref Repo, path: string): (string, string)
 	{ return (r.xunescape(path), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
+Repo.xreadconfig(r: self ref Repo): ref Config
+{
+	return xreadconfig(r.path+"/hgrc");
+}
+
+xreadconfig(path: string): ref Config
+{
+	b := bufio->open(path, Bufio->OREAD);
+	if(b == nil)
+		return ref Config; # absence of file is not an error
+
+	sec := ref Section;
+	c := ref Config;
+	for(;;) {
+		s := b.gets('\n');
+		if(s == nil)
+			break;
+		if(!suffix("\n", s))
+			error("missing newline at end of file");
+		s = s[:len s-1];
+		if(prefix("[", s)) {
+			if(!suffix("]", s))
+				error(sprint("missing ']' in section line: %#q", s));
+			if(sec.name != nil || sec.l != nil) {
+				sec.l = rev(sec.l);
+				c.l = sec::c.l;
+				sec = ref Section;
+			}
+			sec.name = s[1:len s-1];
+		} else if (str->in(s[0], " \t#;")) {
+			continue;
+		} else {
+			(k, v) := str->splitl(s, "=:");
+			if(v == nil)
+				error(sprint("missing separator on line: %#q", s));;
+			k = stripws(k);
+			v = str->drop(v[1:], " \t");
+			for(;;) {
+				ch := b.getb();
+				if(ch != ' ' && ch != '\t') {
+					if(ch != bufio->EOF && ch != bufio->ERROR)
+						b.ungetb();
+					break;
+				}
+				s = b.gets('\n');
+				if(s == nil || s[len s-1] != '\n')
+					error("missing newline at end of file");
+				v += s[:len s-1];
+			}
+			sec.l = ref (k, v)::sec.l;
+		}
+	}
+	if(sec.name != nil || sec.l != nil) {
+		sec.l = rev(sec.l);
+		c.l = sec::c.l;
+	}
+	c.l = rev(c.l);
+	return c;
+}
+
+Config.find(c: self ref Config, sec, name: string): (int, string)
+{
+	for(l := c.l; l != nil; l = tl l) {
+		s := hd l;
+		if(s.name != sec)
+			continue;
+		for(ll := s.l; ll != nil; ll = tl ll) {
+			(k, v) := *hd ll;
+			if(k == name)
+				return (1, v);
+		}
+	}
+	return (0, nil);
+}
+
+Configs.has(c: self ref Configs, sec, name: string): int
+{
+	return c.find(sec, name).t0;
+}
+
+Configs.get(c: self ref Configs, sec, name: string): string
+{
+	return c.find(sec, name).t1;
+}
+
+Configs.find(c: self ref Configs, sec, name: string): (int, string)
+{
+	for(l := c.l; l != nil; l = tl l) {
+		(h, v) := (hd l).find(sec, name);
+		if(h)
+			return (h, v);
+	}
+	return (0, nil);
+}
+
+
+p48(buf: array of byte, o: int, v: big): int
+{
+	o = p32(buf, o, v>>16);
+	return p16(buf, o, int v);
+}
 
 error(s: string)
 {

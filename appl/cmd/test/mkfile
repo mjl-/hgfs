@@ -3,9 +3,9 @@
 TARG=\
 	delta.dis\
 	printpatch.dis\
-	printheads.dis\
 	printchangegroup.dis\
 	testapply.dis\
+	printconfig.dis\
 
 SYSMODULES=\
 	mercurial.m\
@@ -21,6 +21,7 @@ SYSMODULES=\
 	styxservers.m\
 	sys.m\
 	tables.m\
+	filtertool.m\
 
 DISBIN=$ROOT/dis/hg
 

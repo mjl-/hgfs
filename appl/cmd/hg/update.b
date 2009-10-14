@@ -69,12 +69,10 @@ init0(revstr: string)
 	if(ds.p2 != hg->nullnode)
 		error("checkout has two parents, is in merge, refusing to update");
 	onodeid := ds.p1;
-	(orev, nil) := repo.xlookup(onodeid);
+	(orev, nil) := repo.xlookup(onodeid, 1);
 	say(sprint("current rev %d nodeid %q", orev, onodeid));
 
-	(rev, nodeid) := repo.xlookup(revstr);
-	if(rev < 0)
-		error(sprint("no such revision %#q", revstr));
+	(rev, nodeid) := repo.xlookup(revstr, 1);
 	say(sprint("new rev %d nodeid %q, revstr %q", rev, nodeid, revstr));
 
 	(oc, om) := repo.xmanifest(orev);
@@ -86,10 +84,8 @@ init0(revstr: string)
 	if(obranch == nil) obranch = "default";
 	if(nbranch == nil) nbranch = "default";
 
-	ofiles := l2a(om.files);
-	nfiles := l2a(nm.files);
-	inssort(ofiles, mfilege);
-	inssort(nfiles, mfilege);
+	ofiles := om.files;
+	nfiles := nm.files;
 
 	i: int;
 	omtab := Strhash[ref Manifestfile].new(31, nil);
@@ -197,11 +193,6 @@ exists(e: string): int
 {
 	(ok, dir) := sys->stat(e);
 	return ok == 0 && (dir.mode&Sys->DMDIR) == 0;
-}
-
-mfilege(a, b: ref Manifestfile): int
-{
-	return a.path >= b.path;
 }
 
 ewritefile(path: string, nodeid: string)

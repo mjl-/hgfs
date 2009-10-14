@@ -3,9 +3,11 @@
 TARG=\
 	mercurial.dis\
 	mercurialwire.dis\
+	mercurialremote.dis\
 
 MODULES=\
 	mercurialwire.m\
+	mercurialremote.m\
 
 SYSMODULES=\
 	mercurial.m\
@@ -17,6 +19,7 @@ SYSMODULES=\
 	lists.m\
 	string.m\
 	util0.m\
+	filtertool.m\
 
 DISBIN=$ROOT/dis/lib
 

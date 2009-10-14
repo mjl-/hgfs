@@ -15,7 +15,9 @@ repositories (also undocumented).
 
 # install
 
-make sure the path in mkconfig is correct.  create the directory
+first, make sure you have "util", "http", "filtertool" installed.
+
+change mkconfig if you do not have $ROOT set.  create the directory
 $ROOT/dis/hg.  now "mk install" to compile and install the files.
 
 if you want to install hg/websrv, the http pull protocol server,
@@ -44,7 +46,19 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- put Manifest's files into an array and perform binary search on it
+- fncache support
+- hg/pull: make usable
+- read up on all the formats.  e.g. undo's, dirstate, fncache, etc.
+- hg/commit: deal with absent .i files, for new repo's.
+- hg/commit: split into .d files at 128k size of .i
+- hg/verify: check that all revisions in manifest & other non-changelog
+  revlogs are all referenced (manifest from changelog, files from
+  manifests)
+- hg/add, hg/remove, hg/commit: make sure dirstate is complete before using it
+- hg/clone: write dirstate?  write other states.
+- hg/update: fix updating to "null".
+- hg/identify:  print + for local changes, multiple parents
+- library: should deal with absent 00changelog.i and 00 manifest.i.  new repositories don't have these files.
 
 - cgi/websrv: test with various client versions
 
@@ -52,13 +66,11 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
   to name "default-tip" just "tip", but that's confusing with standard
   mercurial practice.  better solution?
 
-- hg/update: fix updating to "null".
-- hg/identity:  print + for local changes, multiple parents
-
 - library: make proper binary diffs.  helps cgi/websrv.
 
 more cpu & memory efficient:
 
+- binary search on Manifest
 - currently a big repository uses too much memory and is slow.  e.g.
   the inferno-os hg tree.  the manifest uses lots of memory.  perhaps
   hg/fs shouldn't create a Revtree in memory, but fulfil readdirs/walks
@@ -79,10 +91,6 @@ more cpu & memory efficient:
 - should not have fixed number of rev's cached data, but one
   base+delta's?  or perhaps not the base as it's pretty big (half
   the size of the delta's i think) and can be read quickly?
-- readdir/stat on file in files/ requires reading,decompressing,parsing
-  patches to calculate the size.  perhaps we should just list files
-  as zero length until they are read?  or just suffer the slowness
-  and perhaps hide it with caching.
 - in hgwire, when making changegroup with changes with big manifests, it will
   help to only look at manifest changes.  now we process all path+nodeid's
   in the whole manifest.  all unchanged path+nodeid's don't even need

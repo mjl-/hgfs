@@ -268,10 +268,8 @@ dostyx(gm: ref Tmsg)
 		"revision" 	=>
 			rev: int;
 			n: string;
-			(rev, n, err) = repo.lookup(hd args);
+			(rev, n, err) = repo.lookup(hd args, 1);
 			say(sprint("repo.lookup %q, rev %d, n nil %d, err %q", hd args, rev, n == nil, err));
-			if(n == nil && err == nil)
-				err = "no such revision";
 			wirefidstr(m, (string rev, err));
 		* =>	return replyerror(m, sprint("unknown command %#q", cmd));
 		}
@@ -767,9 +765,7 @@ parserev(s: string): (int, string)
 		return repo.lastrev();
 	if(suffix("-tip", s))
 		s = s[:len s-len "-tip"];
-	(rev, nil, err) := repo.lookup(s);
-	if(rev < 0 && err == nil)
-		err = "no such revision";
+	(rev, nil, err) := repo.lookup(s, 1);
 	return (rev, err);
 }
 
@@ -822,8 +818,8 @@ replyerror(m: ref Tmsg, s: string)
 manifesttext(m: ref Manifest): string
 {
 	s := "";
-	for(l := m.files; l != nil; l = tl l)
-		s += (hd l).path+"\n";
+	for(i := 0; i < len m.files; i++)
+		s += m.files[i].path+"\n";
 	return s;
 }
 
@@ -1031,7 +1027,7 @@ dirgen(path: string, r: list of ref File): (ref File.Dir, list of ref File)
 	return (f.getdir(), r);
 }
 
-Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
+Revtree.new(c: ref Change, m: ref Manifest, rev: int): ref Revtree
 {
 	say("revtree.new");
 
@@ -1044,15 +1040,15 @@ Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 	rf = ref File.Dir (0, 0, nil, string rev, 8r555|Sys->DMDIR, nil);
 	r := rf::nil;
 
-	for(l := mf.files; l != nil; l = tl l) {
-		m := hd l;
-		dpath := str->splitstrr(m.path, "/").t0;
+	for(i := 0; i < len m.files; i++) {
+		mf := m.files[i];
+		dpath := str->splitstrr(mf.path, "/").t0;
 		if(dpath != nil)
 			dpath = dpath[:len dpath-1];
 		pf: ref File.Dir;
 		(pf, r) = dirgen(dpath, r);
 
-		f := File.new((hd r).gen+1, pf.gen, m.path, m.nodeid, m.flags);
+		f := File.new((hd r).gen+1, pf.gen, mf.path, mf.nodeid, mf.flags);
 		r = f::r;
 		pf.files = f.gen::pf.files;
 	}
@@ -1060,7 +1056,7 @@ Revtree.new(c: ref Change, mf: ref Manifest, rev: int): ref Revtree
 
 	if(dflag) {
 		say(sprint("revtree.new done, have %d paths:", len r));
-		for(i := 0; i < len rt.tree; i++)
+		for(i = 0; i < len rt.tree; i++)
 			say(sprint("\t%s", rt.tree[i].text()));
 		say("eol");
 	}
@@ -1202,7 +1198,8 @@ Tgz: adt {
 	manifest:	ref Manifest;
 
 	data:	array of byte;  # of file-in-progress
-	mf:	list of ref Manifestfile;  # remaining files
+	mf:	array of ref Manifestfile;  # files
+	mfi:	int;	# index in files
 
 	tgzdata:	array of byte;  # output from filter
 	eof:	int;  # whether we've seen filters finished message
@@ -1228,7 +1225,7 @@ Tgz.new(rev: int): (ref Tgz, string)
 	}
 
 	dir := sprint("%s-%d/", reponame, rev);
-	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, array[0] of byte, 0, dir);
+	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, 0, array[0] of byte, 0, dir);
 	return (t, nil);
 }
 
@@ -1246,13 +1243,12 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 		pick m := <-t.rq {
 		Fill =>
 			if(len t.data == 0) {
-				if(t.mf == nil) {
+				if(t.mfi >= len t.mf) {
 					m.reply <-= 0;
 					continue next;
 				}
 
-				f := hd t.mf;
-				t.mf = tl t.mf;
+				f := t.mf[t.mfi++];
 
 				say(sprint("tgz.read, starting on next file, %q", f.path));
 				e: ref Entry;
@@ -1269,7 +1265,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 					return (nil, err);
 
 				last := 0;
-				if(t.mf == nil)
+				if(t.mfi >= len t.mf)
 					last = 2*512;
 
 				hdr := tarhdr(t.dir+f.path, big len d, mtime);
@@ -1303,7 +1299,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 			break next;
 
 		Info =>
-			say("inflate info: "+m.msg);
+			say("deflate info: "+m.msg);
 
 		Error =>
 			return (nil, m.e);

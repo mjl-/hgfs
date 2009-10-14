@@ -10,6 +10,15 @@ TARG=\
 	readrevlog.dis\
 	update.dis\
 	identify.dis\
+	pull.dis\
+	init.dis\
+	clone.dis\
+	verify.dis\
+	add.dis\
+	remove.dis\
+	revert.dis\
+	heads.dis\
+	commit.dis\
 
 SYSMODULES=\
 	mercurial.m\
@@ -25,6 +34,7 @@ SYSMODULES=\
 	styxservers.m\
 	sys.m\
 	tables.m\
+	filtertool.m\
 	util0.m\
 
 DISBIN=$ROOT/dis/hg

@@ -7,10 +7,21 @@ Mercurial: module
 	nullnode:	con "0000000000000000000000000000000000000000";
 
 	checknodeid:	fn(n: string): string;
+	xchecknodeid:	fn(n: string);
 	createnodeid:	fn(d: array of byte, n1, n2: string): (string, string);
+	xcreatenodeid:	fn(d: array of byte, n1, n2: string): string;
 	unhex:		fn(n: string): array of byte;
 	hex:		fn(d: array of byte): string;
 	differs:	fn(r: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int;
+	escape:		fn(path: string): string;
+	xsanitize:	fn(path: string): string;
+	ensuredirs:	fn(root, path: string);
+	xreaduser:	fn(r: ref Repo): string;
+	xreadconfigs:	fn(r: ref Repo): ref Configs;
+	xentrylogtext:	fn(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int): string;
+
+
+	Entrysize:	con 64;
 
 	Change: adt {
 		rev:	int;
@@ -39,11 +50,14 @@ Mercurial: module
 
 	Manifest: adt {
 		nodeid:	string;
-		files:	list of ref Manifestfile;
+		files:	array of ref Manifestfile;
 
+		xpack:	fn(m: self ref Manifest): array of byte;
 		parse:	fn(data: array of byte, n: string): (ref Manifest, string);
 		xparse:	fn(data: array of byte, n: string): ref Manifest;
 		find:	fn(m: self ref Manifest, path: string): ref Manifestfile;
+		add:	fn(m: self ref Manifest, mf: ref Manifestfile);
+		del:	fn(m: self ref Manifest, path: string): int;
 	};
 
 
@@ -66,6 +80,9 @@ Mercurial: module
 
 		packedsize:	fn(e: self ref Dirstate): int;
 		pack:	fn(e: self ref Dirstate, buf: array of byte);
+		find:	fn(d: self ref Dirstate, path: string): ref Dirstatefile;
+		findall:	fn(d: self ref Dirstate, pp: string): list of ref Dirstatefile;
+		add:	fn(d: self ref Dirstate, dsf: ref Dirstatefile);
 	};
 
 	workdirstate:	fn(path: string): (ref Dirstate, string);
@@ -97,6 +114,7 @@ Mercurial: module
 		base, link, p1, p2:     int;
 		nodeid:	string;
 
+		xpack:	fn(e: self ref Entry, buf: array of byte, indexonly: int);
 		parse:	fn(buf: array of byte, index: int): (ref Entry, string);
 		xparse:	fn(buf: array of byte, index: int): ref Entry;
 		text:	fn(e: self ref Entry): string;
@@ -147,6 +165,7 @@ Mercurial: module
 		xpread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): array of byte;
 		length:		fn(rl: self ref Revlog, rev: int): (big, string);
 		xlength:	fn(rl: self ref Revlog, rev: int): big;
+		xverify:	fn(rl: self ref Revlog);
 
 		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
 		xentries:	fn(rl: self ref Revlog): array of ref Entry;
@@ -184,6 +203,7 @@ Mercurial: module
 		writedirstate:	fn(r: self ref Repo, ds: ref Dirstate): string;
 		xwritedirstate:	fn(r: self ref Repo, ds: ref Dirstate);
 		workroot:	fn(r: self ref Repo): string;
+		xworkdir:	fn(r: self ref Repo): string;
 		tags:		fn(r: self ref Repo): (list of ref Tag, string);
 		xtags:		fn(r: self ref Repo): list of ref Tag;
 		revtags:	fn(r: self ref Repo, revstr: string): (list of ref Tag, string);
@@ -200,8 +220,8 @@ Mercurial: module
 		xchangelog:	fn(r: self ref Repo): ref Revlog;
 		manifestlog:	fn(r: self ref Repo): (ref Revlog, string);
 		xmanifestlog:	fn(r: self ref Repo): ref Revlog;
-		lookup:		fn(r: self ref Repo, rev: string): (int, string, string);
-		xlookup:	fn(r: self ref Repo, rev: string): (int, string);
+		lookup:		fn(r: self ref Repo, rev: string, need: int): (int, string, string);
+		xlookup:	fn(r: self ref Repo, rev: string, need: int): (int, string);
 		get:		fn(r: self ref Repo, revstr, path: string): (array of byte, string);
 		xget:		fn(r: self ref Repo, revstr, path: string): array of byte;
 
@@ -211,6 +231,27 @@ Mercurial: module
 		storedir:	fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;
+
+		xreadconfig:	fn(r: self ref Repo): ref Config;
+	};
+
+	Section: adt {
+		name:	string;
+		l:	list of ref (string, string); # key, value
+	};
+
+	Config: adt {
+		l:	list of ref Section;
+
+		find:	fn(c: self ref Config, sec, name: string): (int, string);
+	};
+
+	Configs: adt {
+		l:	list of ref Config;
+
+		has:	fn(c: self ref Configs, sec, name: string): int;
+		get:	fn(c: self ref Configs, sec, name: string): string;
+		find:	fn(c: self ref Configs, sec, name: string): (int, string);
 	};
 
 
