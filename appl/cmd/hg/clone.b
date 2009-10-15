@@ -15,7 +15,7 @@ include "tables.m";
 	Strhash: import tables;
 include "util0.m";
 	util: Util0;
-	kill, min, max, rev, hex, g32i, readfile, l2a, inssort, warn, fail: import util;
+	hasstr, kill, min, max, rev, hex, g32i, readfile, l2a, inssort, warn, fail: import util;
 include "filter.m";
 	inflate: Filter;
 	deflate: Filter;
@@ -38,6 +38,7 @@ dflag: int;
 Cflag: int;
 repo: ref Repo;
 hgpath := "";
+revstr: string;
 path: string;
 dest: string;
 
@@ -61,10 +62,11 @@ init(nil: ref Draw->Context, args: list of string)
 	hgrem->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] path [dest]");
+	arg->setusage(arg->progname()+" [-d] [-r revstr] path [dest]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	hg->debug = dflag++;
+		'r' =>	revstr = arg->earg();
 		* =>	arg->usage();
 		}
 	args = arg->argv();
@@ -91,7 +93,14 @@ init0()
 			error("cannot determine destination directory");
 	}
 	dest += "/";
-	cfd := rr.xchangegroup(nil);
+	if(revstr == nil)
+		cfd := rr.xchangegroup(nil);
+	else {
+		if(!hasstr(rr.xcapabilities(), "changegroupsubset"))
+			error("changegroupsubset not supported");
+		head := rr.xlookup(revstr);
+		cfd = rr.xchangegroupsubset(hg->nullnode::nil, head::nil);
+	}
 
 	create(dest, Sys->OREAD, 8r777|Sys->DMDIR);
 	create(dest+".hg", Sys->OREAD, 8r777|Sys->DMDIR);

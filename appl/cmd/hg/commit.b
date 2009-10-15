@@ -133,7 +133,10 @@ init0(args: list of string)
 
 	ochrev := repo.xlastrev();
 	link := ochrev+1;
-	(nil, m) := repo.xmanifest(ochrev);
+	if(ochrev == -1)
+		m := ref Manifest (hg->nullnode, nil);
+	else
+		(nil, m) = repo.xmanifest(ochrev);
 
 	cp1 := ds.p1;
 	cp2 := ds.p2;
@@ -178,7 +181,6 @@ init0(args: list of string)
 		if(buf == nil)
 			error(sprint("open %q: %r", f));
 
-		# xxx handle creation of revlog
 		rl := repo.xopenrevlog(path);
 
 		fp1 := fp2 := hg->nullnode;
@@ -214,14 +216,21 @@ init0(args: list of string)
 	ce := revlogadd(cl, cp1, cp2, link, array of byte cmsg);
 
 	# xxx should probably fill in most files as normal
-	nds := ref Dirstate (ce.nodeid, nil, nil);
+	nds := ref Dirstate (ce.nodeid, hg->nullnode, nil);
 	repo.xwritedirstate(nds);
 }
 
 revlogadd(rl: ref Revlog, p1, p2: string, link: int, buf: array of byte): ref Entry
 {
 	ents := rl.xentries();
-	eprev := ents[len ents-1];
+	orev := -1;
+	offset := big 0;
+	if(len ents > 0) {
+		ee := ents[len ents-1];
+		orev = ee.rev;
+		offset = ee.offset+big ee.csize;
+	}
+	nrev := orev+1;
 
 	p1rev := p2rev := -1;
 	if(p1 != hg->nullnode) {
@@ -245,18 +254,18 @@ revlogadd(rl: ref Revlog, p1, p2: string, link: int, buf: array of byte): ref En
 	}
 
 	flags := 0;
-	nrev := eprev.rev+1;
 	base := nrev; # xxx fix when we stop inserting full copies
 	isindexonly := rl.isindexonly();
-	e := ref Entry (nrev, eprev.offset+big eprev.csize, big 0, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
+	e := ref Entry (nrev, offset, big 0, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
 say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	ebuf := array[hg->Entrysize] of byte;
 	e.xpack(ebuf, isindexonly);
 
 	# xxx if length current .i file < 128k and length current .i+64+len buf >= 128k, copy all data to .d file and create new .i
 	ipath := rl.path+".i";
-	ib := bufio->open(ipath, Sys->OWRITE);
-	if(ib == nil || ib.seek(big 0, Bufio->SEEKEND) < big 0)
+	repo.xensuredirs(ipath);
+	ib := hg->xbopencreate(ipath, Sys->OWRITE, 8r666);
+	if(ib.seek(big 0, Bufio->SEEKEND) < big 0)
 		error(sprint("open %q: %r", ipath));
 	if(ib.write(ebuf, len ebuf) != len ebuf)
 		error(sprint("write %q: %r", ipath));
@@ -265,7 +274,7 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 			error(sprint("write %q: %r", ipath));
 	} else {
 		dpath := rl.path+".d";
-		dfd := sys->open(dpath, Sys->OWRITE);
+		dfd := hg->xopencreate(dpath, Sys->OWRITE, 8r666);
 		if(dfd == nil || ((nil, dir) := sys->fstat(dfd)).t0 != 0)
 			error(sprint("open %q: %r", dpath));
 		if(sys->pwrite(dfd, buf, len buf, dir.length) != len buf)

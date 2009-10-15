@@ -19,7 +19,8 @@ Mercurial: module
 	xreaduser:	fn(r: ref Repo): string;
 	xreadconfigs:	fn(r: ref Repo): ref Configs;
 	xentrylogtext:	fn(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int): string;
-
+	xopencreate:	fn(f: string, mode, perm: int): ref Sys->FD;
+	xbopencreate:	fn(f: string, mode, perm: int): ref Bufio->Iobuf;
 
 	Entrysize:	con 64;
 
@@ -165,7 +166,6 @@ Mercurial: module
 		xpread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): array of byte;
 		length:		fn(rl: self ref Revlog, rev: int): (big, string);
 		xlength:	fn(rl: self ref Revlog, rev: int): big;
-		xverify:	fn(rl: self ref Revlog);
 
 		entries:	fn(rl: self ref Revlog): (array of ref Entry, string);
 		xentries:	fn(rl: self ref Revlog): array of ref Entry;
@@ -231,6 +231,7 @@ Mercurial: module
 		storedir:	fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;
+		xensuredirs:	fn(r: self ref Repo, fullrlpath: string);
 
 		xreadconfig:	fn(r: self ref Repo): ref Config;
 	};

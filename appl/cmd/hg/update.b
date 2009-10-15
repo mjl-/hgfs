@@ -76,10 +76,17 @@ init0(revstr: string)
 	say(sprint("new rev %d nodeid %q, revstr %q", rev, nodeid, revstr));
 
 	(oc, om) := repo.xmanifest(orev);
-	(nc, nm) := repo.xmanifest(rev);
-
 	(nil, obranch) := oc.findextra("branch");
-	(nil, nbranch) := nc.findextra("branch");
+
+	nbranch: string;
+	if(nodeid == hg->nullnode)
+		nm := ref Manifest (hg->nullnode, nil);
+	else {
+		nc: ref Change;
+		(nc, nm) = repo.xmanifest(rev);
+		(nil, nbranch) = nc.findextra("branch");
+	} 
+
 	wbranch := repo.xworkbranch();
 	if(obranch == nil) obranch = "default";
 	if(nbranch == nil) nbranch = "default";

@@ -262,15 +262,16 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 
 	indexonly := rl.isindexonly();
 	ipath := rl.path+".i";
-	ib := bufio->open(ipath, Sys->OWRITE);
-	if(ib == nil || ib.seek(big 0, Bufio->SEEKEND) < big 0)
-		error(sprint("open %q: %r", ipath));
+	repo.xensuredirs(ipath);
+	ib := hg->xbopencreate(ipath, Sys->OWRITE, 8r666);
+	if(ib.seek(big 0, Bufio->SEEKEND) < big 0)
+		error(sprint("seek %q: %r", ipath));
 	db: ref Iobuf;
 	if(!indexonly) {
 		dpath := rl.path+".d";
-		db = bufio->open(dpath, Sys->OWRITE);
-		if(db == nil)
-			error(sprint("open %q: %r", dpath));
+		db = hg->xbopencreate(dpath, Sys->OWRITE, 8r666);
+		if(ib.seek(big 0, Bufio->SEEKEND) < big 0)
+			error(sprint("seek %q: %r", dpath));
 	}
 
 	base := firstrev := nents := len ents;
@@ -450,14 +451,6 @@ breadn(b: ref Iobuf, n: int): array of byte
 	return buf;
 }
 
-create(f: string, mode, perm: int): ref Sys->FD
-{
-	fd := sys->create(f, mode, perm);
-	if(fd == nil)
-		error(sprint("create %q: %r", f));
-	return fd;
-}
-
 compress(d: array of byte): array of byte
 {
 	(nd, err) := filtertool->convert(deflate, "z", d);
@@ -473,8 +466,6 @@ tablength(t: ref Strhash[ref Entry]): int
 		n += len t.items[i];
 	return n;
 }
-
-
 
 error(s: string)
 {

@@ -21,7 +21,7 @@ include "daytime.m";
 	daytime: Daytime;
 include "util0.m";
 	util: Util0;
-	p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
+	hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
 include "mercurial.m";
 
 
@@ -262,6 +262,27 @@ entrylogkey(k, v: string): string
 	return sprint("%-12s %s\n", k+":", v);
 }
 
+xopencreate(f: string, mode, perm: int): ref Sys->FD
+{
+	fd := sys->create(f, mode|Sys->OEXCL, perm);
+	if(fd == nil) {
+		fd = sys->open(f, mode);
+		if(fd == nil)
+			error(sprint("open %q: %r", f));
+	}
+	return fd;
+}
+
+xbopencreate(f: string, mode, perm: int): ref Iobuf
+{
+	fd := xopencreate(f, mode, perm);
+	b := bufio->fopen(fd, mode);
+	if(b == nil)
+		error(sprint("fopen %q: %r", f));
+	return b;
+}
+
+
 getline(b: ref Iobuf): string
 {
 	l := b.gets('\n');
@@ -477,6 +498,18 @@ Manifest.del(m: self ref Manifest, path: string): int
 
 xreopen(rl: ref Revlog)
 {
+	if(rl.ifd == nil) {
+		f := rl.path+".i";
+		rl.ifd = sys->open(f, Sys->OREAD);
+		if(rl.ifd == nil) {
+			err := sprint("open %q: %r", f);
+			(ok, nil) := sys->stat(f);
+			if(ok != 0)
+				return;  # absent file is okay, xxx perhaps check error string?
+			error(err);
+		}
+	}
+
 	# test whether we need to reread index files
 	(ok, dir) := sys->fstat(rl.ifd);
 	if(ok < 0)
@@ -563,11 +596,6 @@ Revlog.xopen(path: string, cacheall: int): ref Revlog
 	rl.path = path;
 	rl.fullrev = -1;
 	rl.cacheall = cacheall;
-
-	# we keep ifd open at all times.  we'll need it if this revlog isindexonly and we need to read data parts.
-	rl.ifd = sys->open(path+".i", Sys->OREAD);
-	if(rl.ifd == nil)
-		error(sprint("open %q: %r", path+".i"));
 
 	rl.ilength = ~big 0;
 	rl.imtime = ~0;
@@ -799,13 +827,6 @@ Revlog.xlength(rl: self ref Revlog, rev: int): big
 	return big rl.xfind(rev).uncsize;
 }
 
-Revlog.xverify(rl: self ref Revlog)
-{
-	xreopen(rl);
-	for(i := 0; i < len rl.ents; i++)
-		rl.xget(rl.ents[i].rev);
-}
-
 Revlog.xfind(rl: self ref Revlog, rev: int): ref Entry
 {
 	xreopen(rl);
@@ -856,6 +877,19 @@ Revlog.xpread(rl: self ref Revlog, rev: int, n: int, off: big): array of byte
 	return d;
 }
 
+xreadlines(b: ref Iobuf): list of string
+{
+	l: list of string;
+	for(;;) {
+		s := b.gets('\n');
+		if(s == nil)
+			break;
+		if(s[len s-1] == '\n')
+			s = s[:len s-1];
+		l = s::l;
+	}
+	return l;
+}
 
 Repo.xopen(path: string): ref Repo
 {
@@ -865,15 +899,7 @@ Repo.xopen(path: string): ref Repo
 	b := bufio->open(reqpath, Bufio->OREAD);
 	if(b == nil)
 		error(sprint("repo \"requires\" file: %r"));
-	requires: list of string;
-	for(;;) {
-		l := b.gets('\n');
-		if(l == nil)
-			break;
-		if(l[len l-1] == '\n')
-			l = l[:len l-1];
-		requires = l::requires;
-	}
+	requires := xreadlines(b);
 
 	namepath := path+"/..";
 	(ok, dir) := sys->stat(namepath);
@@ -1005,19 +1031,7 @@ Repo.xmanifest(r: self ref Repo, rev: int): (ref Change, ref Manifest)
 
 Repo.xlastrev(r: self ref Repo): int
 {
-	cl := r.xchangelog();
-
-	(ok, d) := sys->fstat(cl.ifd);
-	if(ok != 0)
-		error(sprint("fstat changelog index: %r"));
-
-	if(r.lastrevision >= 0 && d.mtime <= r.lastmtime)
-		return r.lastrevision;
-
-	rev := cl.xlastrev();
-	r.lastrevision = rev;
-	r.lastmtime = d.mtime;
-	return rev;
+	return r.xchangelog().xlastrev();
 }
 
 Repo.xchange(r: self ref Repo, rev: int): ref Change
@@ -1455,6 +1469,15 @@ Repo.xget(r: self ref Repo, revstr, path: string): array of byte
 	return rl.xgetnodeid(mf.nodeid);
 }
 
+Repo.xensuredirs(r: self ref Repo, fullrlpath: string)
+{
+	pre := r.storedir()+"/";
+	if(!str->prefix(pre, fullrlpath))
+		error(sprint("revlog path %#q not in store path %#q", fullrlpath, pre));
+	fullrlpath = "./"+str->drop(fullrlpath[len pre:], "/");
+	ensuredirs(pre, fullrlpath);
+
+}
 
 find(a: array of string, e: string): int
 {
