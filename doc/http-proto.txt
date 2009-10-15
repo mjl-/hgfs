@@ -51,7 +51,9 @@ example:
 description:
         returns the base nodeid and its p1 and p2 for each requested
         tip.  the base is the first node in the history that has
-        two parents, starting at the given tip.
+        two parents, starting at the given tip.  if there is no
+        ancestor with two parents, the first revision is returned
+        with two null nodes as parents.
 
         if the base for the nullnode is requested, just return all
         of tip,base,p1,p2 as null nodes.  if the requested node

@@ -96,7 +96,7 @@ init0()
 				for(ll := tab.items[j]; ll != nil; ll = tl ll) {
 					(n, nil) := hd ll;
 					say(sprint("nodeid %q", n));
-					rl.xfindnodeid(n);
+					rl.xfindnodeid(n, 1);
 				}
 			}
 		}

@@ -109,7 +109,7 @@ differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
 	e, e1, e2: ref Entry;
 	(rl, err) := repo.openrevlog(path);
 	if(err == nil)
-		(e, err) = rl.findnodeid(mf.nodeid);
+		(e, err) = rl.findnodeid(mf.nodeid, 1);
 	if(err == nil && e.p1 >= 0)
 		(e1, err) = rl.find(e.p1);
 	if(err == nil && e.p2 >= 0)
@@ -756,7 +756,7 @@ Revlog.xget(rl: self ref Revlog, rev: int): array of byte
 
 Revlog.xgetnodeid(rl: self ref Revlog, n: string): array of byte
 {
-	e := rl.xfindnodeid(n);
+	e := rl.xfindnodeid(n, 1);
 	return rl.xget(e.rev);
 }
 
@@ -820,14 +820,15 @@ Revlog.xfind(rl: self ref Revlog, rev: int): ref Entry
 }
 
 
-Revlog.xfindnodeid(rl: self ref Revlog, n: string): ref Entry
+Revlog.xfindnodeid(rl: self ref Revlog, n: string, need: int): ref Entry
 {
 	xreopen(rl);
 	for(i := 0; i < len rl.ents; i++)
 		if(rl.ents[i].nodeid == n)
 			return rl.ents[i];
-	error(sprint("no nodeid %q", n));
-	return nil; # not reached
+	if(need)
+		error(sprint("no nodeid %q", n));
+	return nil;
 }
 
 Revlog.xlastrev(rl: self ref Revlog): int
@@ -1263,7 +1264,7 @@ xparsetags(r: ref Repo, s: string): list of ref Tag
 		name := hd tl t;
 		n := hd t;
 		xchecknodeid(n);
-		e := cl.xfindnodeid(n);
+		e := cl.xfindnodeid(n, 1);
 		l = ref Tag (name, n, e.rev)::l;
 	}
 	return util->rev(l);
@@ -1318,7 +1319,7 @@ say("repo.branches");
 		name := hd tl toks;
 		n := hd toks;
 		xchecknodeid(n);
-		e := cl.xfindnodeid(n);
+		e := cl.xfindnodeid(n, 1);
 		l = ref Branch (name, n, e.rev)::l;
 	}
 
@@ -1407,7 +1408,12 @@ Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 	if(len s == 40) {
 		err := checknodeid(s);
 		if(err == nil) {
-			e := cl.xfindnodeid(s);
+			e := cl.xfindnodeid(s, 0);
+			if(e == nil) {
+				if(need)
+					error("no such nodeid "+s);
+				return (-1, nil);
+			}
 			return (e.rev, e.nodeid);
 		}
 	}
@@ -1953,9 +1959,9 @@ Revlog.find(rl: self ref Revlog, rev: int): (ref Entry, string)
 	{ return (rl.xfind(rev), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
-Revlog.findnodeid(rl: self ref Revlog, n: string): (ref Entry, string)
+Revlog.findnodeid(rl: self ref Revlog, n: string, need: int): (ref Entry, string)
 {
-	{ return (rl.xfindnodeid(n), nil); } exception e { "hg:*" => return (nil, e[3:]); }
+	{ return (rl.xfindnodeid(n, need), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
 Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
@@ -2099,7 +2105,9 @@ xreadconfig(path: string): ref Config
 		if(!suffix("\n", s))
 			error("missing newline at end of file");
 		s = s[:len s-1];
-		if(prefix("[", s)) {
+		if(s == nil || str->in(s[0], " \t#;")) {
+			continue;
+		} else if(prefix("[", s)) {
 			if(!suffix("]", s))
 				error(sprint("missing ']' in section line: %#q", s));
 			if(sec.name != nil || sec.l != nil) {
@@ -2108,8 +2116,6 @@ xreadconfig(path: string): ref Config
 				sec = ref Section;
 			}
 			sec.name = s[1:len s-1];
-		} else if (str->in(s[0], " \t#;")) {
-			continue;
 		} else {
 			(k, v) := str->splitl(s, "=:");
 			if(v == nil)

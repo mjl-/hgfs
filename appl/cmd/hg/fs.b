@@ -1123,7 +1123,7 @@ filerev(rl: ref Revlog, f: ref File.Plain): (int, string)
 {
 	if(f.rev >= 0)
 		return (f.rev, nil);
-	(e, err) := rl.findnodeid(f.nodeid);
+	(e, err) := rl.findnodeid(f.nodeid, 1);
 	if(err == nil)
 		f.rev = e.rev;
 	return (f.rev, err);
@@ -1256,7 +1256,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 				d: array of byte;
 				(rl, err) := openrevlog(f.path);
 				if(err == nil)
-					(e, err) = rl.findnodeid(f.nodeid);
+					(e, err) = rl.findnodeid(f.nodeid, 1);
 				if(err == nil)
 					(mtime, err) = repo.mtime(rl, e.rev);
 				if(err == nil)

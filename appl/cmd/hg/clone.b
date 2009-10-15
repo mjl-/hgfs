@@ -169,7 +169,7 @@ revlogwrite(b: ref Iobuf, basedir, path: string, chtab: ref Strhash[ref Entry]):
 
 	base := 0;
 	nents := 0;
-	ebuf := array[hg->Entrysize] of {* => byte 0};
+	ebuf := array[hg->Entrysize] of byte;
 	for(;;) {
 		i := bg32(b);
 		if(i == 0)

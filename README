@@ -47,8 +47,10 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 # todo
 
 - fncache support
-- hg/pull: make usable
-- read up on all the formats.  e.g. undo's, dirstate, fncache, etc.
+- make lib out of code for commit,clone,pull
+- read up on all the formats.  dirstate, undo.dirstate undo.branch
+  (for rollback), journal.dirstate, journal.branch, wlock;  lock,
+  journal, fncache, etc.;  http://mercurial.selenic.com/wiki/FileFormats
 - hg/commit: deal with absent .i files, for new repo's.
 - hg/commit: split into .d files at 128k size of .i
 - hg/verify: check that all revisions in manifest & other non-changelog
@@ -59,6 +61,7 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - hg/update: fix updating to "null".
 - hg/identify:  print + for local changes, multiple parents
 - library: should deal with absent 00changelog.i and 00 manifest.i.  new repositories don't have these files.
+- library: when finding tags, look at the .hgtags for each head, on conflict make the most recent head win.
 
 - cgi/websrv: test with various client versions
 
@@ -99,3 +102,8 @@ more cpu & memory efficient:
 
 - use more from nsz's excellent docs in his hgc, at https://sharesource.org/hg/hgc/
 - think about other tools such as pull & clone.
+
+## future
+
+- local tags?
+- ignore files?

@@ -19,6 +19,6 @@ Mercurialremote: module
 		xbranches:	fn(rr: self ref Remrepo, nodes: list of string): list of ref (string, string, string, string);
 		xbetween:	fn(rr: self ref Remrepo, pairs: list of ref (string, string)): list of list of string;
 		xchangegroup:	fn(rr: self ref Remrepo, roots: list of string): ref Sys->FD;
-		#xchangegroupsubset
+		xchangegroupsubset:	fn(rr: self ref Remrepo, bases, heads: list of string): ref Sys->FD;
 	};
 };

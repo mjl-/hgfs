@@ -157,8 +157,8 @@ Mercurial: module
 		xlastrev:	fn(rl: self ref Revlog): int;
 		find:		fn(rl: self ref Revlog, rev: int): (ref Entry, string);
 		xfind:		fn(rl: self ref Revlog, rev: int): ref Entry;
-		findnodeid:	fn(rl: self ref Revlog, n: string): (ref Entry, string);
-		xfindnodeid:	fn(rl: self ref Revlog, n: string): ref Entry;
+		findnodeid:	fn(rl: self ref Revlog, n: string, need: int): (ref Entry, string);
+		xfindnodeid:	fn(rl: self ref Revlog, n: string, need: int): ref Entry;
 		delta:		fn(rl: self ref Revlog, prev, rev: int): (array of byte, string);
 		xdelta:		fn(rl: self ref Revlog, prev, rev: int): array of byte;
 		pread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): (array of byte, string);

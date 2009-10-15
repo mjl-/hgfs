@@ -216,6 +216,38 @@ say(sprint("requesting url %q", u.pack()));
 	}
 }
 
+Remrepo.xchangegroupsubset(rr: self ref Remrepo, bases, heads: list of string): ref Sys->FD
+{
+	pick r := rr {
+	Http =>
+		qs := "?cmd=changegroupsubset";
+
+		baseqs := "";
+		for(l := bases; l != nil; l = tl l) {
+			hg->xchecknodeid(hd l);
+			baseqs += "+"+hd l;
+		}
+		if(baseqs != nil)
+			qs += "&bases="+baseqs[1:];
+
+		headqs := "";
+		for(l = heads; l != nil; l = tl l) {
+			hg->xchecknodeid(hd l);
+			headqs += "+"+hd l;
+		}
+		if(headqs != nil)
+			qs += "&heads="+headqs[1:];
+
+		u := ref *r.url;
+		u.query = qs;
+say(sprint("requesting url %q", u.pack()));
+		(nil, nil, fd, err) := http->get(u, ref Hdrs);
+		if(err != nil)
+			error(err);
+		return fd;
+	}
+}
+
 error(s: string)
 {
 	raise "hg:"+s;
