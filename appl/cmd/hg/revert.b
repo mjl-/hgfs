@@ -74,7 +74,6 @@ init0(args: list of string)
 	dirty := 0;
 	base := repo.xworkdir();
 	say(sprint("base %q", base));
-	pathtab := Strhash[string].new(31, nil);
 	for(l := args; l != nil; l = tl l) {
 		path := hg->xsanitize(base+"/"+hd l);
 		dsf := ds.find(path);

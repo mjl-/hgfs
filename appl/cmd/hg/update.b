@@ -204,24 +204,25 @@ exists(e: string): int
 
 ewritefile(path: string, nodeid: string)
 {
-	(rl, err) := repo.openrevlog(path);
-	buf: array of byte;
-	if(err == nil)
-		(buf, err) = rl.getnodeid(nodeid);
-	if(err != nil)
-		fail(err);
+	{
+		rl := repo.xopenrevlog(path);
+		buf := rl.xgetnodeid(nodeid);
 
-	s := ".";
-	for(l := sys->tokenize(path, "/").t1; len l > 1; l = tl l) {
-		s += "/"+hd l;
-		sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR);
+		s := ".";
+		for(l := sys->tokenize(path, "/").t1; len l > 1; l = tl l) {
+			s += "/"+hd l;
+			sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR);
+		}
+
+		fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
+		if(fd == nil)
+			fail(sprint("create %q: %r", path));
+		if(sys->write(fd, buf, len buf) != len buf)
+			fail(sprint("write %q: %r", path));
+	} exception x {
+	"hg:*" =>
+		error(x[3:]);
 	}
-
-	fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
-	if(fd == nil)
-		fail(sprint("create %q: %r", path));
-	if(sys->write(fd, buf, len buf) != len buf)
-		fail(sprint("write %q: %r", path));
 }
 
 dsadd(ds: ref Dirstate, path: string)

@@ -19,6 +19,9 @@ include "string.m";
 	str: String;
 include "daytime.m";
 	daytime: Daytime;
+include "tables.m";
+	tables: Tables;
+	Strhash: import tables;
 include "util0.m";
 	util: Util0;
 	hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
@@ -36,6 +39,7 @@ init()
 	keyring = load Keyring Keyring->PATH;
 	str = load String String->PATH;
 	daytime = load Daytime Daytime->PATH;
+	tables = load Tables Tables->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
 	filtertool = load Filtertool Filtertool->PATH;
@@ -106,26 +110,26 @@ differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
 	if(buf == nil)
 		return 1;
 
-	e, e1, e2: ref Entry;
-	(rl, err) := repo.openrevlog(path);
-	if(err == nil)
-		(e, err) = rl.findnodeid(mf.nodeid, 1);
-	if(err == nil && e.p1 >= 0)
-		(e1, err) = rl.find(e.p1);
-	if(err == nil && e.p2 >= 0)
-		(e2, err) = rl.find(e.p2);
-	if(err != nil) {
-		warn(sprint("%q: %s", path, err));
+	{
+		rl := repo.xopenrevlog(path);
+		e := rl.xfindnodeid(mf.nodeid, 1);
+		if(e.p1 >= 0)
+			e1 := rl.xfind(e.p1);
+		if(e.p2 >= 0)
+			e2 := rl.xfind(e.p2);
+
+		n1 := n2 := nullnode;
+		if(e1 != nil)
+			n1 = e1.nodeid;
+		if(e2 != nil)
+			n2 = e2.nodeid;
+		(n, err) := createnodeid(buf, n1, n2);
+		return err != nil || mf.nodeid != n;
+	} exception x {
+	"hg:*" =>
+		warn(sprint("%q: %s", path, x[3:]));
 		return 1;
 	}
-	n1 := n2 := nullnode;
-	if(e1 != nil)
-		n1 = e1.nodeid;
-	if(e2 != nil)
-		n2 = e2.nodeid;
-	n: string;
-	(n, err) = createnodeid(buf, n1, n2);
-	return err != nil || mf.nodeid != n;
 }
 
 escape(s: string): string
@@ -293,11 +297,6 @@ getline(b: ref Iobuf): string
 
 nullchange: Change;
 
-Change.parse(data: array of byte, e: ref Entry): (ref Change, string)
-{
-	{ return (Change.xparse(data, e), nil); } exception ex { "hg:*" => return (nil, ex[3:]); }
-}
-
 Change.xparse(data: array of byte, e: ref Entry): ref Change
 {
 	c := ref nullchange;
@@ -431,11 +430,6 @@ Manifest.xpack(m: self ref Manifest): array of byte
 		s += "\n";
 	}
 	return array of byte s;
-}
-
-Manifest.parse(d: array of byte, n: string): (ref Manifest, string)
-{
-	{ return (Manifest.xparse(d, n), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
 Manifest.xparse(d: array of byte, n: string): ref Manifest
@@ -613,7 +607,8 @@ Revlog.isindexonly(rl: self ref Revlog): int
 	{ 
 		xreopen(rl);
 	} exception {
-	"hg:*" =>	;
+	"hg:*" =>
+		;
 	}
 	return rl.flags & Indexonly;
 }
@@ -833,8 +828,11 @@ Revlog.xfind(rl: self ref Revlog, rev: int): ref Entry
 
 	# looking for last entry
 	# xxx is this really needed?
-	if(rev < 0)
+	if(rev < 0) {
+		if(len rl.ents == 0)
+			error("no revisions yet");
 		return rl.ents[len rl.ents-1];
+	}
 	if(rev >= len rl.ents)
 		error(sprint("unknown revision %d", rev));
 	return rl.ents[rev];
@@ -1210,15 +1208,26 @@ Repo.xworkdir(r: self ref Repo): string
 
 Repo.xtags(r: self ref Repo): list of ref Tag
 {
-	cl := r.xchangelog();
-	ents := cl.xentries();
-	if(len ents == 0)
-		return nil;
-	e := ents[len ents-1];
-	(buf, err) := r.get(e.nodeid, ".hgtags");
-	if(err != nil)
-		return nil;
-	return xparsetags(r, string buf);
+	tags: list of ref Tag;
+	tagtab := Strhash[ref Tag].new(31, nil);
+	heads := r.xheads();
+	for(i := len heads-1; i >= 0; i--) {
+		e := heads[i];
+		(nil, m) := r.xmanifest(e.rev);
+		mf := m.find(".hgtags");
+		if(mf == nil)
+			continue;
+		buf := r.xget(mf.nodeid, ".hgtags");
+		for(l := xparsetags(r, string buf); l != nil; l = tl l) {
+			t := hd l;
+			if(tagtab.find(t.name) == nil) {
+				tags = t::tags;
+				tagtab.add(t.name, t);
+			}
+		}
+	}
+	tagtab = nil;
+	return tags;
 }
 
 Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
@@ -1227,7 +1236,6 @@ Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 
 	cl := r.xchangelog();
 	ents := cl.xentries();
-		
 
 	el: list of ref Entry;
 	for(i := 0; i < len ents; i++) {
@@ -1239,9 +1247,13 @@ Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 	tags: list of ref Tag;
 	for(; el != nil; el = tl el) {
 		e := hd el;
-		(buf, err) := r.get(e.nodeid, ".hgtags");
-		if(err != nil)
+		buf: array of byte;
+		{
+			buf = r.xget(e.nodeid, ".hgtags");
+		} exception {
+		"hg:*" =>
 			continue;
+		}
 		l := xparsetags(r, string buf);
 		for(; l != nil; l = tl l) {
 			t := hd l;
@@ -1252,11 +1264,6 @@ Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 	if(len ents > 0 && ents[len ents-1].rev == rev)
 		tags = ref Tag ("tip", n, rev)::tags;
 	return tags;
-}
-
-parsetags(r: ref Repo, s: string): (list of ref Tag, string)
-{
-	{ return (xparsetags(r, s), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
 xparsetags(r: ref Repo, s: string): list of ref Tag
@@ -1401,6 +1408,8 @@ Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 	ents := cl.xentries();
 
 	if(s == "tip" || s == ".") {
+		if(len ents == 0)
+			return (-1, "null");  # should this raise error if need is set?
 		e := ents[len ents-1];
 		return (e.rev, e.nodeid);
 	}
@@ -1623,11 +1632,6 @@ Group.flatten(g: self ref Group): array of byte
 	return d;
 }
 
-Patch.applymany(base: array of byte, patches: array of array of byte): (array of byte, string)
-{
-	{ return (Patch.xapplymany(base, patches), nil); } exception e { "hg:*" => return (nil, e[3:]); };
-}
-
 Patch.xapplymany(base: array of byte, patches: array of array of byte): array of byte
 {
 	if(len patches == 0)
@@ -1654,11 +1658,6 @@ Patch.sizediff(p: self ref Patch): int
 		n += len h.buf - (h.end-h.start);
 	}
 	return n;
-}
-
-Patch.parse(d: array of byte): (ref Patch, string)
-{
-	{ return (Patch.xparse(d), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
 Patch.xparse(d: array of byte): ref Patch
@@ -1723,11 +1722,6 @@ Entry.xpack(e: self ref Entry, buf: array of byte, indexonly: int)
 	o += 12;
 	if(o != Entrysize)
 		error("Entry.pack error");
-}
-
-Entry.parse(buf: array of byte, index: int): (ref Entry, string)
-{
-	{ return (Entry.xparse(buf, index), nil); } exception e { "hg:*" => return (nil, e[3:]); }
 }
 
 Entry.xparse(buf: array of byte, index: int): ref Entry
@@ -1889,11 +1883,6 @@ workdir(): string
 	return sys->fd2path(fd);
 }
 
-workdirstate(path: string): (ref Dirstate, string)
-{
-	{ return (xworkdirstate(path), nil); } exception e { "hg*:" => return (nil, e[3:]); }
-}
-
 xworkdirstate(path: string): ref Dirstate
 {
 	ds := ref Dirstate (nil, nil, nil);
@@ -1946,167 +1935,6 @@ breadn(b: ref Iobuf, buf: array of byte, e: int): int
 	return s;
 }
 
-a2l[T](a: array of T): list of T
-{
-	l: list of T;
-	for(i := len a-1; i >= 0; i--)
-		l = a[i]::l;
-	return l;
-}
-
-
-# look away please
-
-Revlog.open(path: string, cacheall: int): (ref Revlog, string)
-{
-	{ return (Revlog.xopen(path, cacheall), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.get(rl: self ref Revlog, rev: int): (array of byte, string)
-{
-	{ return (rl.xget(rev), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.getnodeid(rl: self ref Revlog, n: string): (array of byte, string)
-{
-	{ return (rl.xgetnodeid(n), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.lastrev(rl: self ref Revlog): (int, string)
-{
-	{ return (rl.xlastrev(), nil); } exception e { "hg:*" => return (-1, e[3:]); }
-}
-
-Revlog.find(rl: self ref Revlog, rev: int): (ref Entry, string)
-{
-	{ return (rl.xfind(rev), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.findnodeid(rl: self ref Revlog, n: string, need: int): (ref Entry, string)
-{
-	{ return (rl.xfindnodeid(n, need), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.delta(rl: self ref Revlog, prev, rev: int): (array of byte, string)
-{
-	{ return (rl.xdelta(prev, rev), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.pread(rl: self ref Revlog, rev: int, n: int, off: big): (array of byte, string)
-{
-	{ return (rl.xpread(rev, n, off), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Revlog.length(rl: self ref Revlog, rev: int): (big, string)
-{
-	{ return (rl.xlength(rev), nil); } exception e { "hg:*" => return (big -1, e[3:]); }
-}
-
-Revlog.entries(rl: self ref Revlog): (array of ref Entry, string)
-{
-	{ return (rl.xentries(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-
-Repo.open(path: string): (ref Repo, string)
-{
-	{ return (Repo.xopen(path), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.find(path: string): (ref Repo, string)
-{
-	{ return (Repo.xfind(path), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.openrevlog(r: self ref Repo, path: string): (ref Revlog, string)
-{
-	{ return (r.xopenrevlog(path), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.manifest(r: self ref Repo, rev: int): (ref Change, ref Manifest, string)
-{
-	{ (c, m) := r.xmanifest(rev); return (c, m, nil); } exception e { "hg:*" => return (nil, nil, e[3:]); }
-}
-
-Repo.lastrev(r: self ref Repo): (int, string)
-{
-	{ return (r.xlastrev(), nil); } exception e { "hg:*" => return (-1, e[3:]); }
-}
-
-Repo.change(r: self ref Repo, rev: int): (ref Change, string)
-{
-	{ return (r.xchange(rev), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.mtime(r: self ref Repo, rl: ref Revlog, rev: int): (int, string)
-{
-	{ return (r.xmtime(rl, rev), nil); } exception e { "hg:*" => return (0, e[3:]); }
-}
-
-Repo.dirstate(r: self ref Repo): (ref Dirstate, string)
-{
-	{ return (r.xdirstate(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.writedirstate(r: self ref Repo, ds: ref Dirstate): string
-{
-	{ r.xwritedirstate(ds); return nil; } exception e { "hg:*" => return e[3:]; }
-}
-
-Repo.tags(r: self ref Repo): (list of ref Tag, string)
-{
-	{ return (r.xtags(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.revtags(r: self ref Repo, revstr: string): (list of ref Tag, string)
-{
-	{ return (r.xrevtags(revstr), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.branches(r: self ref Repo): (list of ref Branch, string)
-{
-	{ return (r.xbranches(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.workbranch(r: self ref Repo): (string, string)
-{
-	{ return (r.xworkbranch(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.writeworkbranch(r: self ref Repo, b: string): string
-{
-	{ r.xwriteworkbranch(b); return nil; } exception e { "hg:*" => return e[3:]; }
-}
-
-Repo.heads(r: self ref Repo): (array of ref Entry, string)
-{
-	{ return (r.xheads(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.changelog(r: self ref Repo): (ref Revlog, string)
-{
-	{ return (r.xchangelog(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.manifestlog(r: self ref Repo): (ref Revlog, string)
-{
-	{ return (r.xmanifestlog(), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.lookup(r: self ref Repo, rev: string, need: int): (int, string, string)
-{
-	{ (rr, n) := r.xlookup(rev, need); return (rr, n, nil); } exception e { "hg:*" => return (-1, nil, e[3:]); }
-}
-
-Repo.get(r: self ref Repo, revstr, path: string): (array of byte, string)
-{
-	{ return (r.xget(revstr, path), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
-
-Repo.unescape(r: self ref Repo, path: string): (string, string)
-{
-	{ return (r.xunescape(path), nil); } exception e { "hg:*" => return (nil, e[3:]); }
-}
 
 Repo.xreadconfig(r: self ref Repo): ref Config
 {

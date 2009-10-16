@@ -129,19 +129,22 @@ readchunk(): ref Chunk
 	if(len buf < 4*20)
 		fail(sprint("short chunk, len buf %d < 4*20, buf %s or %s", len buf, base16->enc(buf), string buf));
 	c := ref Chunk;
-	o := 0;
-	c.n = hg->hex(buf[o:o+20]);
-	o += 20;
-	c.p1 = hg->hex(buf[o:o+20]);
-	o += 20;
-	c.p2 = hg->hex(buf[o:o+20]);
-	o += 20;
-	c.link = hg->hex(buf[o:o+20]);
-	o += 20;
-	(p, err) := Patch.parse(buf[o:]);
-	if(err != nil)
-		fail("parsing patch: "+err);
-	c.p = p;
+	{
+		o := 0;
+		c.n = hg->hex(buf[o:o+20]);
+		o += 20;
+		c.p1 = hg->hex(buf[o:o+20]);
+		o += 20;
+		c.p2 = hg->hex(buf[o:o+20]);
+		o += 20;
+		c.link = hg->hex(buf[o:o+20]);
+		o += 20;
+		p := Patch.xparse(buf[o:]);
+		c.p = p;
+	} exception x {
+	"hg:*" =>
+		fail("parsing patch: "+x[3:]);
+	}
 	return c;
 }
 

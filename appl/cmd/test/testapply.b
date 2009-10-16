@@ -52,9 +52,12 @@ init(nil: ref Draw->Context, args: list of string)
 			fail(sprint("%r"));
 	}
 	l = rev(l);
-	(r, err) := Patch.applymany(base, l2a(l));
-	if(err != nil)
-		fail(sprint("applymany: %r"));
-	if(sys->write(sys->fildes(1), r, len r) != len r)
-		fail(sprint("write: %r"));
+	{
+		r := Patch.xapplymany(base, l2a(l));
+		if(sys->write(sys->fildes(1), r, len r) != len r)
+			fail(sprint("write: %r"));
+	} exception x {
+	"hg:*" =>
+		fail(x[3:]);
+	}
 }

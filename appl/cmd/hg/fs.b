@@ -145,10 +145,8 @@ init(nil: ref Draw->Context, args: list of string)
 	revloglock = chan[1] of int;
 	revloglock <-= 1;
 
-	err: string;
-	(repo, err) = Repo.find(hgpath);
-	if(err != nil)
-		fail(err);
+	{ repo = Repo.xfind(hgpath); }
+	exception x { "hg:*" => fail(x[3:]); }
 	say("found repo");
 
 	reponame = repo.name();
@@ -266,103 +264,123 @@ dostyx(gm: ref Tmsg)
 		"changegroup"	=> wirefidfd(m, hgwire->changegroup(repo, hd args));
 		"changegroupsubset"	=> wirefidfd(m, hgwire->changegroupsubset(repo, hd args, hd tl args));
 		"revision" 	=>
-			rev: int;
-			n: string;
-			(rev, n, err) = repo.lookup(hd args, 1);
-			say(sprint("repo.lookup %q, rev %d, n nil %d, err %q", hd args, rev, n == nil, err));
-			wirefidstr(m, (string rev, err));
+			{
+				(rev, nil) := repo.xlookup(hd args, 1);
+				wirefidstr(m, (string rev, nil));
+			} exception x {
+			"hg:*" =>
+				wirefidstr(m, (nil, x[3:]));
+			}
 		* =>	return replyerror(m, sprint("unknown command %#q", cmd));
 		}
 
 	Read =>
-		f := srv.getfid(m.fid);
-		if(f.qtype & Sys->QTDIR) {
-			# pass to navigator, to readdir
-			srv.default(m);
-			return;
+		{
+			xdoread(m);
+		} exception x {
+		"hg:*" =>
+			return replyerror(m, x[3:]);
 		}
-		say(sprint("read f.path=%bd", f.path));
+
+	Clunk or
+	Remove =>
+		f := srv.getfid(m.fid);
 		q := int f.path&16rff;
 
 		case q {
-		Qlastrev =>
-			(rev, err) := repo.lastrev();
-			if(err != nil)
-				return replyerror(m, err);
-			srv.reply(styxservers->readstr(m, sprint("%d", rev)));
+		Qtgzrev =>	tgztab.del(f.fid);
+		Qwire =>	wiretab.del(f.fid);
+		}
+		srv.default(gm);
 
-		Qtags =>
-			(tags, err) := repo.tags();
-			if(err != nil)
-				return replyerror(m, err);
+	* =>
+		srv.default(gm);
+	}
+}
+
+xdoread(m: ref Tmsg.Read)
+{
+	f := srv.getfid(m.fid);
+	if(f.qtype & Sys->QTDIR) {
+		# pass to navigator, to readdir
+		srv.default(m);
+		return;
+	}
+	say(sprint("read f.path=%bd", f.path));
+	q := int f.path&16rff;
+
+	case q {
+	Qlastrev =>
+		lastrev := repo.xlastrev();
+		srv.reply(styxservers->readstr(m, string lastrev));
+
+	Qtags =>
+		if(m.offset == big 0 || f.data == nil) {
+			tags := repo.xtags();
 			s := "";
-			for(l := tags; l != nil; l = tl l)
-				s += sprint("%q %s %d\n", (hd l).n, (hd l).name, (hd l).rev);
-			srv.reply(styxservers->readstr(m, s));
+			for(l := tags; l != nil; l = tl l) {
+				t := hd l;
+				s += sprint("%q %s %d\n", t.n, t.name, t.rev);
+			}
+			f.data = array of byte s;
+		}
+		srv.reply(styxservers->readbytes(m, f.data));
 
-		Qbranches =>
-			(tags, err) := repo.branches();
-			if(err != nil)
-				return replyerror(m, err);
+	Qbranches =>
+		if(m.offset == big 0 || f.data == nil) {
+			branches := repo.xbranches();
 			s := "";
-			for(l := tags; l != nil; l = tl l)
-				s += sprint("%q %s %d\n", (hd l).n, (hd l).name, (hd l).rev);
-			srv.reply(styxservers->readstr(m, s));
-
-		Qlogrev =>
-			(rev, nil) := revgen(f.path);
-			(data, err) := changeget(rev);
-			if(err != nil)
-				return replyerror(m, err);
-			srv.reply(styxservers->readbytes(m, data));
-
-		Qmanifestrev =>
-			(rev, nil) := revgen(f.path);
-			(data, err) := manifestget(rev);
-			if(err != nil)
-				return replyerror(m, err);
-			srv.reply(styxservers->readbytes(m, data));
-
-		Qtgzrev =>
-			(rev, nil) := revgen(f.path);
-
-			tgz := tgztab.find(f.fid);
-			if(tgz == nil) {
-				if(m.offset != big 0)
-					return replyerror(m, "random reads on .tgz's not supported");
-
-				err: string;
-				(tgz, err) = Tgz.new(rev);
-				if(err != nil)
-					return replyerror(m, err);
-				tgztab.add(f.fid, tgz);
+			for(l := branches; l != nil; l = tl l) {
+				b := hd l;
+				s += sprint("%q %s %d\n", b.n, b.name, b.rev);
 			}
-			(buf, err) := tgz.read(m.count, m.offset);
-			if(err != nil)
-				return replyerror(m, err);
-			srv.reply(ref Rmsg.Read(m.tag, buf));
+			f.data = array of byte s;
+		}
+		srv.reply(styxservers->readbytes(m, f.data));
 
-		Qfilesrev =>
-			d: array of byte;
-			(rev, gen) := revgen(f.path);
-			(r, err) := treeget(rev);
-			if(err == nil)
-				(d, err) = fileread(r, gen, m.count, m.offset);
-			if(err != nil)
-				return replyerror(m, err);
-			srv.reply(ref Rmsg.Read (m.tag, d));
+	Qlogrev =>
+		if(m.offset == big 0 || f.data == nil) {
+			(rev, nil) := revgen(f.path);
+			s := repo.xchange(rev).text();
+			f.data = array of byte s;
+		}
+		srv.reply(styxservers->readbytes(m, f.data));
 
-		Qchanges =>
-			if(m.offset == big 0 || f.data == nil) {
-				c := changetab.find(int f.path);
-				(s, err) := changehist(c);
-				if(err != nil)
-					return replyerror(m, err);
-				f.data = array of byte s;
-			}
-			srv.reply(styxservers->readbytes(m, f.data));
+	Qmanifestrev =>
+		if(m.offset == big 0 || f.data == nil) {
+			(rev, nil) := revgen(f.path);
+			(nil, mm) := repo.xmanifest(rev);
+			f.data = array of byte manifesttext(mm);
+		}
+		srv.reply(styxservers->readbytes(m, f.data));
 
-		Qstate =>
+	Qtgzrev =>
+		tgz := tgztab.find(f.fid);
+		if(tgz == nil) {
+			if(m.offset != big 0)
+				return replyerror(m, "random reads on .tgz's not supported");
+
+			(rev, nil) := revgen(f.path);
+			tgz = Tgz.new(rev);
+			tgztab.add(f.fid, tgz);
+		}
+		buf := tgz.read(m.count, m.offset);
+		srv.reply(ref Rmsg.Read(m.tag, buf));
+
+	Qfilesrev =>
+		(rev, gen) := revgen(f.path);
+		d := fileread(treeget(rev), gen, m.count, m.offset);
+		srv.reply(ref Rmsg.Read (m.tag, d));
+
+	Qchanges =>
+		if(m.offset == big 0 || f.data == nil) {
+			c := changetab.find(int f.path);
+			f.data = array of byte xchangehist(c);
+		}
+		srv.reply(styxservers->readbytes(m, f.data));
+
+	Qstate =>
+		if(m.offset == big 0 || f.data == nil) {
 			s := sprint("reponame %q\nrevtree size %d max %d\n", reponame, revtreesize, revtreemax);
 
 			tgzstr := "";
@@ -386,36 +404,22 @@ dostyx(gm: ref Tmsg)
 				}
 			}
 			s += sprint("revtreetab: %d revtrees\n", nrt)+rtstr;
-
-			srv.reply(styxservers->readstr(m, s));
-
-		Qwire =>
-			fd := wiretab.find(f.fid);
-			if(fd == nil)
-				return replyerror(m, "no command");
-			buf := array[m.count] of byte;
-			n := sys->read(fd, buf, len buf);
-			if(n < 0)
-				return replyerror(m, sprint("read: %r"));
-			srv.reply(ref Rmsg.Read (m.tag, buf[:n]));
-
-		* =>
-			replyerror(m, styxservers->Eperm);
+			f.data = array of byte s;
 		}
+		srv.reply(styxservers->readbytes(m, f.data));
 
-	Clunk or
-	Remove =>
-		f := srv.getfid(m.fid);
-		q := int f.path&16rff;
-
-		case q {
-		Qtgzrev =>	tgztab.del(f.fid);
-		Qwire =>	wiretab.del(f.fid);
-		}
-		srv.default(gm);
+	Qwire =>
+		fd := wiretab.find(f.fid);
+		if(fd == nil)
+			return replyerror(m, "no command");
+		buf := array[m.count] of byte;
+		n := sys->read(fd, buf, len buf);
+		if(n < 0)
+			return replyerror(m, sprint("read: %r"));
+		srv.reply(ref Rmsg.Read (m.tag, buf[:n]));
 
 	* =>
-		srv.default(gm);
+		replyerror(m, styxservers->Eperm);
 	}
 }
 
@@ -446,12 +450,12 @@ navigate(navop: ref Navop)
 		say("stat");
 		case q {
 		Qfilesrev =>
-			(r, err) := treeget(rev);
-			say(sprint("navigator, stat, op.path %bd, rev %d, gen %d", op.path, rev, gen));
-			d: ref Sys->Dir;
-			if(err == nil)
-				(d, err) = r.stat(gen);
-			op.reply <-= (d, err);
+			{
+				op.reply <-= treeget(rev).stat(gen);
+			} exception x {
+			"hg:*" =>
+				op.reply <-= (nil, x[3:]);
+			}
 
 		Qchanges =>
 			c := changetab.find(int op.path);
@@ -468,11 +472,12 @@ navigate(navop: ref Navop)
 
 		case q {
 		Qfilesrev =>
-			(r, err) := treeget(rev);
-			d: ref Sys->Dir;
-			if(err == nil)
-				(d, err) = r.walk(gen, op.name);
-			op.reply <-= (d, err);
+			{
+				op.reply <-= treeget(rev).walk(gen, op.name);
+			} exception x {
+			"hg:*" =>
+				op.reply <-= (nil, x[3:]);
+			}
 			return;
 
 		Qchanges =>
@@ -511,28 +516,34 @@ navigate(navop: ref Navop)
 			op.reply <-= (nil, styxservers->Enotfound);
 
 		Qfiles =>
-			(nrev, err) := parserev(op.name);
-			if(err != nil) {
-				op.reply <-= (nil, err);
+			nrev: int;
+			{
+				nrev = parserev(op.name);
+			} exception x {
+			"hg:*" =>
+				op.reply <-= (nil, x[3:]);
 				return;
 			}
 
 			say("walk to files/<rev>/");
-			(r, rerr) := treeget(nrev);
-			if(rerr != nil)
-				op.reply <-= (nil, rerr);
-			else
-				op.reply <-= r.stat(0);
+			{
+				op.reply <-= treeget(nrev).stat(0);
+			} exception x {
+			"hg:*" =>
+				op.reply <-= (nil, x[3:]);
+			}
 
 		Qlog or
 		Qmanifest =>
-			(nrev, err) := parserev(op.name);
-			if(err != nil) {
-				op.reply <-= (nil, err);
+			nrev: int;
+			{
+				nrev = parserev(op.name);
+				op.reply <-= (dir(child(q)|big nrev<<32, revmtime(nrev)), nil);
+			} exception x {
+			"hg:*" =>
+				op.reply <-= (nil, x[3:]);
 				return;
 			}
-
-			op.reply <-= (dir(child(q)|big nrev<<32, revmtime(nrev)), nil);
 
 		Qtgz =>
 			name := reponame+"-";
@@ -542,21 +553,24 @@ navigate(navop: ref Navop)
 			}
 			revstr := op.name[len name:len op.name-len ".tgz"];
 			nrev: int;
-			err: string;
-			if(revstr == "latest") {
-				(nrev, err) = repo.lastrev();
-			} else {
-				# look for branch-rev
-				(nil, brrev) := str->splitstrl(revstr, "-");
-				if(brrev != nil)
-					revstr = brrev[1:];
-				(nrev, err) = parserev(revstr);
-			}
-			if(err != nil) {
+			{
+				if(revstr == "latest") {
+					nrev = repo.xlastrev();
+				} else {
+					# look for branch-rev
+					(nil, brrev) := str->splitstrl(revstr, "-");
+					if(brrev != nil)
+						revstr = brrev[1:];
+					nrev = parserev(revstr);
+				}
+				if(nrev < 0)
+					op.reply <-= (nil, styxservers->Enotfound);
+				else
+					op.reply <-= (dir(child(q)|big nrev<<32, revmtime(nrev)), nil);
+			} exception {
+			"hg:*" =>
 				op.reply <-= (nil, styxservers->Enotfound);
-				return;
 			}
-			op.reply <-= (dir(child(q)|big nrev<<32, revmtime(nrev)), err);
 
 		* =>
 			raise sprint("unhandled case in walk %q, from %d", op.name, q);
@@ -577,54 +591,57 @@ navigate(navop: ref Navop)
 		Qmanifest or
 		Qtgz =>
 			# tip, branch tips, tags
-			b: list of ref Branch;
-			trev: int;
-			(t, err) := repo.tags();
-			if(err == nil)
-				(b, err) = repo.branches();
-			if(err == nil)
-				(trev, err) = repo.lastrev();
-			if(err != nil) {
-				op.reply <-= (nil, err);
-				return;
-			}
-			r := array[1+len b+len t] of (int, string, int);
-			i := 0;
-			Ttip, Tbranch, Ttag: con iota;
-			r[i++] = (Ttip, "tip", trev);
-			for(; b != nil; b = tl b)
-				r[i++] = (Tbranch, (hd b).name, (hd b).rev);
-			for(; t != nil; t = tl t)
-				r[i++] = (Ttag, (hd t).name, (hd t).rev);
+			{
+				t := repo.xtags();
+				b := repo.xbranches();
+				trev := repo.xlastrev();
+				say(sprint("list revisions, %d tags, %d branches, 1 lastrev", len t, len b));
+				if(trev < 0)
+					break;
+				r := array[1+len b+len t] of (int, string, int);
+				i := 0;
+				Ttip, Tbranch, Ttag: con iota;
+				r[i++] = (Ttip, "tip", trev);
+				for(; b != nil; b = tl b)
+					r[i++] = (Tbranch, (hd b).name, (hd b).rev);
+				for(; t != nil; t = tl t)
+					r[i++] = (Ttag, (hd t).name, (hd t).rev);
 
-			s := op.offset;
-			if(s > len r)
-				s = len r;
-			e := s+op.count;
-			if(e > len r)
-				e = len r;
-			while(s < e) {
-				(typ, name, rrev) := r[s++];
-				mtime := revmtime(rrev);
-				d := dir(big child(q)|big rrev<<32, mtime);
-				case q {
-				Qfiles or
-				Qlog or
-				Qmanifest =>
-					d.name = name;
-					if(typ == Tbranch)
-						d.name = d.name+"-tip";
-				Qtgz =>
-					case typ {
-					Ttip =>
-						d.name = sprint("%s-%d.tgz", reponame, rrev);
-					Tbranch =>
-						d.name = sprint("%s-%s-%d.tgz", reponame, name, rrev);
-					Ttag =>
-						d.name = sprint("%s-%s.tgz", reponame, name);
+				s := op.offset;
+				if(s > len r)
+					s = len r;
+				e := s+op.count;
+				if(e > len r)
+					e = len r;
+				say(sprint("list revisions, len r %d, s %d, e %d", len r, s, e));
+				while(s < e) {
+					(typ, name, rrev) := r[s++];
+					mtime := revmtime(rrev);
+					d := dir(big child(q)|big rrev<<32, mtime);
+					case q {
+					Qfiles or
+					Qlog or
+					Qmanifest =>
+						d.name = name;
+						if(typ == Tbranch)
+							d.name = d.name+"-tip";
+					Qtgz =>
+						case typ {
+						Ttip =>
+							d.name = sprint("%s-%d.tgz", reponame, rrev);
+						Tbranch =>
+							d.name = sprint("%s-%s-%d.tgz", reponame, name, rrev);
+						Ttag =>
+							d.name = sprint("%s-%s.tgz", reponame, name);
+						}
 					}
+					op.reply <-= (d, nil);
 				}
-				op.reply <-= (d, nil);
+			} exception x {
+			"hg:*" =>
+				warn(sprint("list revisions, err %q", x[3:]));
+				op.reply <-= (nil, x[3:]);
+				return;
 			}
 
 		Qchanges =>
@@ -636,13 +653,13 @@ navigate(navop: ref Navop)
 				op.reply <-= (c.files[i].dir(), nil);
 
 		Qfilesrev =>
-			(r, err) := treeget(rev);
-			if(err != nil) {
-				op.reply <-= (nil, err);
-				return;
-			} else
-				if(!r.readdir(gen, op))
+			{
+				if(!treeget(rev).readdir(gen, op))
 					return;
+			} exception x {
+			"hg:*" =>
+				op.reply <-= (nil, x[3:]);
+			}
 
 		* =>
 			raise sprint("unhandled case for readdir %d", q);
@@ -659,14 +676,10 @@ changenodeid(ents: array of ref Entry, rev: int): string
 	return ents[rev].nodeid;
 }
 
-changehist(c: ref Changefile): (string, string)
+xchangehist(c: ref Changefile): string
 {
-	(rl, err) := repo.openrevlog(c.path);
-	ents: array of ref Entry;
-	if(err == nil)
-		(ents, err) = rl.entries();
-	if(err != nil)
-		return (nil, err);
+	rl := repo.xopenrevlog(c.path);
+	ents := rl.xentries();
 	s := "";
 	for(i := 0; i < len ents; i++) {
 		e := ents[i];
@@ -675,7 +688,7 @@ changehist(c: ref Changefile): (string, string)
 		s += " "+changenodeid(ents, e.p2);
 		s += "\n";
 	}
-	return (s, nil);
+	return s;
 }
 
 changeupdate(c: ref Changefile)
@@ -706,9 +719,13 @@ changeupdate(c: ref Changefile)
 		for(i := 0; i < len a; i++) {
 			d := a[i];
 
-			(name, err) := repo.unescape(d.name);
-			if(err != nil)
-				return warn(err);
+			name: string;
+			{
+				name = repo.xunescape(d.name);
+			} exception x {
+			"hg:*" =>
+				return warn(x[3:]);
+			}
 			if(len name >= 2 && name[len name-2:] == ".d")
 				continue;
 			if(len name >= 2 && name[len name-2:] == ".i")
@@ -742,9 +759,12 @@ revgen(path: big): (int, int)
 
 revmtime(rev: int): int
 {
-	(c, err) := repo.change(rev);
-	if(err == nil)
+	{
+		c := repo.xchange(rev);
 		return c.when+c.tzoff;
+	} exception {
+	"hg:*" => ;
+	}
 	return 0;
 }
 
@@ -759,14 +779,16 @@ child(q: int): big
 	}
 }
 
-parserev(s: string): (int, string)
+parserev(s: string): int
 {
 	if(s == "last")
-		return repo.lastrev();
+		return repo.xlastrev();
 	if(suffix("-tip", s))
 		s = s[:len s-len "-tip"];
-	(rev, nil, err) := repo.lookup(s, 1);
-	return (rev, err);
+	(rev, nil) := repo.xlookup(s, 1);
+	if(rev < 0)
+		error("no such revision");
+	return rev;
 }
 
 dir(path: big, mtime: int): ref Sys->Dir
@@ -824,29 +846,11 @@ manifesttext(m: ref Manifest): string
 }
 
 
-changeget(rev: int): (array of byte, string)
-{
-	(c, err) := repo.change(rev);
-	if(err == nil)
-		d := array of byte c.text();
-	return (d, err);
-}
-
-manifestget(rev: int): (array of byte, string)
-{
-	(nil, m, err) := repo.manifest(rev);
-	if(err == nil)
-		d := array of byte manifesttext(m);
-	return (d, err);
-}
-
-fileread(r: ref Revtree, gen: int, n: int, off: big): (array of byte, string)
+fileread(r: ref Revtree, gen: int, n: int, off: big): array of byte
 {
 	if(srv.msize > 0 && n > srv.msize)
 		n = srv.msize;
-	(d, err) := r.pread(gen, n, off);
-	say(sprint("fileread, len %d, err %q", len d, err));
-	return (d, err);
+	return r.pread(gen, n, off);
 }
 
 
@@ -865,7 +869,7 @@ revlogcleaner()
 	}
 }
 
-openrevlog(path: string): (ref Revlog, string)
+openrevlog(path: string): ref Revlog
 {
 	<-revloglock;
 	for(i := 0; i < len revlogtab; i++) {
@@ -873,17 +877,21 @@ openrevlog(path: string): (ref Revlog, string)
 		if(rlpath == path) {
 			revlogtab[i].t2 = daytime->now();
 			revloglock <-= 1;
-			return (rl, nil);
+			return rl;
 		}
 	}
 
-	(rl, err) := repo.openrevlog(path);
-	if(err == nil) {
+	{
+		rl := repo.xopenrevlog(path);
 		revlogtab[1:] = revlogtab[:len revlogtab-1];
 		revlogtab[0] = (path, rl, daytime->now());
+		revloglock <-= 1;
+		return rl;
+	} exception {
+	"hg:*" =>
+		revloglock <-= 1;
+		raise;
 	}
-	revloglock <-= 1;
-	return (rl, err);
 }
 
 # lru, should be done more efficiently
@@ -905,13 +913,11 @@ treepurge()
 }
 
 treeusegen := 0;
-treeget(rev: int): (ref Revtree, string)
+treeget(rev: int): ref Revtree
 {
 	rt := revtreetab.find(rev);
 	if(rt == nil) {
-		(change, manifest, err) := repo.manifest(rev);
-		if(err != nil)
-			return (nil, err);
+		(change, manifest) := repo.xmanifest(rev);
 		rt = Revtree.new(change, manifest, rev);
 		if(revtreesize >= revtreemax)
 			treepurge();
@@ -920,7 +926,7 @@ treeget(rev: int): (ref Revtree, string)
 		revtreetab.add(rev, rt);
 	}
 	rt.used = treeusegen++;
-	return (rt, nil);
+	return rt;
 }
 
 
@@ -995,7 +1001,7 @@ Revtree: adt {
 
 	new:	fn(c: ref Change, mf: ref Manifest, rev: int): ref Revtree;
 	readdir:	fn(r: self ref Revtree, gen: int, op: ref Navop.Readdir): int;
-	pread:	fn(r: self ref Revtree, gen: int, n: int, off: big): (array of byte, string);
+	pread:	fn(r: self ref Revtree, gen: int, n: int, off: big): array of byte;
 	stat:	fn(r: self ref Revtree, gen: int): (ref Sys->Dir, string);
 	walk:	fn(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string);
 };
@@ -1119,29 +1125,23 @@ Revtree.walk(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string
 	return (nil, styxservers->Enotfound);
 }
 
-filerev(rl: ref Revlog, f: ref File.Plain): (int, string)
+filerev(rl: ref Revlog, f: ref File.Plain): int
 {
-	if(f.rev >= 0)
-		return (f.rev, nil);
-	(e, err) := rl.findnodeid(f.nodeid, 1);
-	if(err == nil)
+	if(f.rev < 0) {
+		e := rl.xfindnodeid(f.nodeid, 1);
 		f.rev = e.rev;
-	return (f.rev, err);
+	}
+	return f.rev;
 }
 
-Revtree.pread(r: self ref Revtree, gen: int, n: int, off: big): (array of byte, string)
+Revtree.pread(r: self ref Revtree, gen: int, n: int, off: big): array of byte
 {
 	f := r.tree[gen].getplain();
 	if(dflag)say(sprint("revtree.read, f %s", f.text()));
 
-	rev: int;
-	d: array of byte;
-	(rl, err) := openrevlog(f.path);
-	if(err == nil)
-		(rev, err) = filerev(rl, f);
-	if(err == nil)
-		(d, err) = rl.pread(rev, n, off);
-	return (d, err);
+	rl := openrevlog(f.path);
+	rev := filerev(rl, f);
+	return rl.xpread(rev, n, off);
 }
 
 Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
@@ -1159,19 +1159,10 @@ Revtree.stat(r: self ref Revtree, gen: int): (ref Sys->Dir, string)
 		d.qid.qtype = Sys->QTFILE;
 
 		if(ff.length < 0) {
-			rev: int;
-			(rl, err) := openrevlog(f.path);
-			if(err == nil)
-				(rev, err) = filerev(rl, ff);
-			if(err == nil)
-				(ff.mtime, err) = repo.mtime(rl, rev);
-			if(err != nil)
-				return (nil, "getting file mtime: "+err);
-
-			length: big;
-			(length, err) = rl.length(rev);
-			if(err != nil)
-				return (nil, err);
+			rl := openrevlog(f.path);
+			rev := filerev(rl, ff);
+			ff.mtime = repo.xmtime(rl, rev);
+			length := rl.xlength(rev);
 			ff.length = int length;
 		}
 
@@ -1205,16 +1196,14 @@ Tgz: adt {
 	eof:	int;  # whether we've seen filters finished message
 	dir:	string;
 
-	new:	fn(rev: int): (ref Tgz, string);
-	read:	fn(t: self ref Tgz, n: int, off: big): (array of byte, string);
+	new:	fn(rev: int): ref Tgz;
+	read:	fn(t: self ref Tgz, n: int, off: big): array of byte;
 	close:	fn(t: self ref Tgz);
 };
 
-Tgz.new(rev: int): (ref Tgz, string)
+Tgz.new(rev: int): ref Tgz
 {
-	(nil, manifest, err) := repo.manifest(rev);
-	if(err != nil)
-		return (nil, err);
+	(nil, mm) := repo.xmanifest(rev);
 
 	rq := deflate->start("h");
 	msg := <-rq;
@@ -1225,16 +1214,16 @@ Tgz.new(rev: int): (ref Tgz, string)
 	}
 
 	dir := sprint("%s-%d/", reponame, rev);
-	t := ref Tgz(rev, big 0, pid, rq, manifest, array[0] of byte, manifest.files, 0, array[0] of byte, 0, dir);
-	return (t, nil);
+	t := ref Tgz(rev, big 0, pid, rq, mm, array[0] of byte, mm.files, 0, array[0] of byte, 0, dir);
+	return t;
 }
 
-Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
+Tgz.read(t: self ref Tgz, n: int, off: big): array of byte
 {
 	say(sprint("tgz.read, n %d off %bd", n, off));
 
 	if(off != t.tgzoff)
-		return (nil, "random reads on .tgz's not supported");
+		error("random reads on .tgz's not supported");
 
 	if(!t.eof && len t.tgzdata == 0) {
 		# handle filter msgs until we find either result, finished, or error
@@ -1251,18 +1240,11 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 				f := t.mf[t.mfi++];
 
 				say(sprint("tgz.read, starting on next file, %q", f.path));
-				e: ref Entry;
-				mtime: int;
-				d: array of byte;
-				(rl, err) := openrevlog(f.path);
-				if(err == nil)
-					(e, err) = rl.findnodeid(f.nodeid, 1);
-				if(err == nil)
-					(mtime, err) = repo.mtime(rl, e.rev);
-				if(err == nil)
-					(d, err) = rl.get(e.rev);
-				if(err != nil)
-					return (nil, err);
+
+				rl := openrevlog(f.path);
+				e := rl.xfindnodeid(f.nodeid, 1);
+				mtime := repo.xmtime(rl, e.rev);
+				d := rl.xget(e.rev);
 
 				last := 0;
 				if(t.mfi >= len t.mf)
@@ -1302,7 +1284,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 			say("deflate info: "+m.msg);
 
 		Error =>
-			return (nil, m.e);
+			error(m.e);
 		}
 	}
 
@@ -1316,7 +1298,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): (array of byte, string)
 	t.tgzdata = rem;
 	t.tgzoff += big give;
 	say(sprint("tgz.read, gave %d bytes, remaining len t.tgzdata %d", give, len t.tgzdata));
-	return (r, nil);
+	return r;
 }
 
 Tgz.close(t: self ref Tgz)
@@ -1361,6 +1343,11 @@ has(s: string, c: int): int
 		if(s[i] == c)
 			return 1;
 	return 0;
+}
+
+error(s: string)
+{
+	raise "hg:"+s;
 }
 
 say(s: string)

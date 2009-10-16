@@ -38,13 +38,16 @@ init(nil: ref Draw->Context, args: list of string)
 	if(args != nil)
 		arg->usage();
 
-	buf := get();
-	(p, err) := Patch.parse(buf);
-	if(err != nil)
-		fail("parse patch: "+err);
-	for(l := p.l; l != nil; l = tl l) {
-		h := hd l;
-		sys->print("start=%d end=%d buf:\n%s\n", h.start, h.end, string h.buf);
+	{
+		buf := get();
+		p := Patch.xparse(buf);
+		for(l := p.l; l != nil; l = tl l) {
+			h := hd l;
+			sys->print("start=%d end=%d buf:\n%s\n", h.start, h.end, string h.buf);
+		}
+	} exception x {
+	"hg:*" =>
+		fail(x[3:]);
 	}
 }
 

@@ -61,30 +61,24 @@ init(nil: ref Draw->Context, args: list of string)
 		arg->usage();
 	rev := int hd args;
 
-	(repo, rerr) := Repo.find(hgpath);
-	if(rerr != nil)
-		fail(rerr);
+	{
+		repo := Repo.xfind(hgpath);
 
-	rl: ref Revlog;
-	err: string;
-	case which {
-	Tchangelog =>
-		(rl, err) = repo.changelog();
-	Tmanifest =>
-		(rl, err) = repo.manifestlog();
-	Tfile =>
-		(rl, err) = repo.openrevlog(revlog);
+		rl: ref Revlog;
+		case which {
+		Tchangelog =>	rl = repo.xchangelog();
+		Tmanifest =>	rl = repo.xmanifestlog();
+		Tfile =>	rl = repo.xopenrevlog(revlog);
+		}
+
+		buf := rl.xdelta(-1, rev); # xxx make parent specifyable too?  default to base?
+
+		if(sys->write(sys->fildes(1), buf, len buf) != len buf)
+			fail(sprint("write: %r"));
+	} exception x {
+	"hg:*" =>
+		fail(x[3:]);
 	}
-	if(err != nil)
-		fail("open revlog: "+err);
-
-	buf: array of byte;
-	(buf, err) = rl.delta(-1, rev); # xxx make parent specifyable too?  default to base?
-	if(err != nil)
-		fail("delta: "+err);
-
-	if(sys->write(sys->fildes(1), buf, len buf) != len buf)
-		fail(sprint("write: %r"));
 }
 
 warn(s: string)
