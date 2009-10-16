@@ -13,7 +13,7 @@ include "tables.m";
 	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	readfile, l2a, inssort, warn, fail: import util;
@@ -65,9 +65,9 @@ init(nil: ref Draw->Context, args: list of string)
 init0(revstr: string)
 {
 	repo = Repo.xfind(hgpath);
-	ds := repo.xdirstate();
-	if(ds.p2 != hg->nullnode)
-		error("checkout has two parents, is in merge, refusing to update");
+	ds := hg->xdirstate(repo, 0);
+
+	# xxx do special things when two parents are present (i.e. we were merging)?
 	onodeid := ds.p1;
 	(orev, nil) := repo.xlookup(onodeid, 1);
 	say(sprint("current rev %d nodeid %q", orev, onodeid));
@@ -94,54 +94,28 @@ init0(revstr: string)
 	ofiles := om.files;
 	nfiles := nm.files;
 
-	i: int;
-	omtab := Strhash[ref Manifestfile].new(31, nil);
-	for(i = 0; i < len ofiles; i++)
-		omtab.add(ofiles[i].path, ofiles[i]);
-
 	dsf := l2a(ds.l);
-	for(i = 0; i < len dsf; i++) {
-		e := dsf[i];
-		case e.state {
+	for(i := 0; i < len dsf; i++) {
+		f := dsf[i];
+		case f.state {
+		hg->STuntracked =>
+			if(!Cflag && om.find(f.path) == nil && (mf := nm.find(f.path)) != nil && hg->differs(repo, mf))
+				error(sprint("untracked file %q is present by different in target revision, refusing to update without -C", f.path));
 		hg->STneedmerge or
 		hg->STremove or
 		hg->STadd =>
-			fail("files have been scheduled for merge, remove or add, refusing to update");
+			if(!Cflag)
+				error(sprint("%q is schedule for merge/remove/add, refusing to update without -C", f.path));
 		hg->STnormal =>
-			omf := omtab.find(e.path);
-			if(omf == nil)
-				error(sprint("%#q in dirstate but not in manifest", e.path));
-			if(!Cflag && hg->differs(repo, big e.size, e.mtime, omf))
-				error(sprint("%#q has been modified, refusing to update", e.path));
+			if(!Cflag && f.size < 0)
+				error(sprint("%q has been modified, refusing to update without -C", f.path));
 		* =>
 			raise "missing case";
 		}
 	}
 
-	# check that files present in new manifest and in working dir but not in old manifest are the same
+	nds := ref Dirstate (1, nodeid, hg->nullnode, nil, nil);
 	oi := ni := 0;
-	for(;;) {
-		if(oi < len ofiles)
-			op := ofiles[oi].path;
-		if(ni < len nfiles)
-			np := nfiles[ni].path;
-		if(op == nil && np == nil)
-			break;
-
-		if(np == op) {
-			ni++;
-			oi++;
-		} else if(np != nil && np < op || op == nil) {
-			if(!Cflag && exists(np) && hg->differs(repo, big -1, -1, nfiles[ni]))
-				error(sprint("%#q is in new revision, not in old, but is different from new version", np));
-			ni++;
-		} else if(op < np || np == nil) {
-			oi++;
-		}
-	}
-
-	nds := ref Dirstate (nodeid, hg->nullnode, nil);
-	oi = ni = 0;
 	for(;;) {
 		if(oi < len ofiles)
 			op := ofiles[oi].path;
@@ -152,7 +126,7 @@ init0(revstr: string)
 
 		say(sprint("checking %q and %q", op, np));
 		if(op == np) {
-			if(ofiles[oi].nodeid != nfiles[ni].nodeid || hg->differs(repo, big -1, -1, nfiles[ni])) {
+			if(ofiles[oi].nodeid != nfiles[ni].nodeid || hg->differs(repo, nfiles[ni])) {
 				say(sprint("updating %q", np));
 				ewritefile(np, nfiles[ni].nodeid);
 			}
@@ -178,7 +152,7 @@ init0(revstr: string)
 		repo.xwriteworkbranch(nbranch);
 }
 
-removedirs(mf: array of ref Manifestfile, p: string)
+removedirs(mf: array of ref Mfile, p: string)
 {
 	(a, nil) := str->splitstrr(p, "/");
 	if(a == nil || mfhasprefix(mf, a))
@@ -188,7 +162,7 @@ removedirs(mf: array of ref Manifestfile, p: string)
 	removedirs(mf, a);
 }
 
-mfhasprefix(mf: array of ref Manifestfile, p: string): int
+mfhasprefix(mf: array of ref Mfile, p: string): int
 {
 	for(i := 0; i < len mf; i++)
 		if(str->prefix(p, mf[i].path))
@@ -204,34 +178,29 @@ exists(e: string): int
 
 ewritefile(path: string, nodeid: string)
 {
-	{
-		rl := repo.xopenrevlog(path);
-		buf := rl.xgetnodeid(nodeid);
+	rl := repo.xopenrevlog(path);
+	buf := rl.xgetnodeid(nodeid);
 
-		s := ".";
-		for(l := sys->tokenize(path, "/").t1; len l > 1; l = tl l) {
-			s += "/"+hd l;
-			sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR);
-		}
-
-		fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
-		if(fd == nil)
-			fail(sprint("create %q: %r", path));
-		if(sys->write(fd, buf, len buf) != len buf)
-			fail(sprint("write %q: %r", path));
-	} exception x {
-	"hg:*" =>
-		error(x[3:]);
+	s := ".";
+	for(l := sys->tokenize(path, "/").t1; len l > 1; l = tl l) {
+		s += "/"+hd l;
+		sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR);
 	}
+
+	fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
+	if(fd == nil)
+		error(sprint("create %q: %r", path));
+	if(sys->write(fd, buf, len buf) != len buf)
+		error(sprint("write %q: %r", path));
 }
 
 dsadd(ds: ref Dirstate, path: string)
 {
 	(ok, dir) := sys->stat(path);
 	if(ok < 0)
-		fail(sprint("stat %q: %r", path));
-	dsf := ref Dirstatefile (hg->STnormal, dir.mode&8r777, int dir.length, dir.mtime, path, nil);
-	ds.l = dsf::ds.l;
+		error(sprint("stat %q: %r", path));
+	dsf := ref Dsfile (hg->STnormal, dir.mode&8r777, int dir.length, dir.mtime, path, nil, 0);
+	ds.add(dsf);
 }
 
 error(s: string)

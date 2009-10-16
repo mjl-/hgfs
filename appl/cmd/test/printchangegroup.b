@@ -14,7 +14,7 @@ include "encoding.m";
 	base16: Encoding;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Patch, Hunk: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Patch, Hunk: import hg;
 
 HgPrintchangegroup: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);

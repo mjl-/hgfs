@@ -2,7 +2,7 @@
 
 DIRS=\
 	hg\
-	#cgi\
+	cgi\
 	#test\
 
 SYSMODULES=\

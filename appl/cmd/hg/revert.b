@@ -15,7 +15,7 @@ include "tables.m";
 	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	rev, readfile, l2a, inssort, warn, fail: import util;
@@ -42,7 +42,7 @@ init(nil: ref Draw->Context, args: list of string)
 	hg->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] [-h path] path ...");
+	arg->setusage(arg->progname()+" [-d] [-h path] [path ...]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	hg->debug = dflag++;
@@ -50,8 +50,6 @@ init(nil: ref Draw->Context, args: list of string)
 		* =>	arg->usage();
 		}
 	args = arg->argv();
-	if(args == nil)
-		arg->usage();
 
 	{ init0(args); }
 	exception e {
@@ -63,25 +61,15 @@ init(nil: ref Draw->Context, args: list of string)
 init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
-
-	ds := repo.xdirstate();
-	if(ds.p2 != hg->nullnode)
-		error("checkout has two parents, is in merge, refusing to update");
-	# xxx make sure dirstate is complete & correct
-
+	ds := hg->xdirstate(repo, 0);
 	root := repo.workroot();
 
-	dirty := 0;
-	base := repo.xworkdir();
-	say(sprint("base %q", base));
-	for(l := args; l != nil; l = tl l) {
-		path := hg->xsanitize(base+"/"+hd l);
-		dsf := ds.find(path);
-		if(dsf == nil) {
-			warn(sprint("%q: file not tracked", dsf.path));
-			continue;
-		}
-		buf := repo.xget(ds.p1, path);
+	(nil, l) := ds.enumerate(repo.xworkdir(), args, 0, 1);
+	for(; l != nil; l = tl l) {
+		dsf := hd l;
+		path := dsf.path;
+
+		buf := repo.xread(path, ds);
 		hg->ensuredirs(root, path);
 		f := root+"/"+path;
 		fd := sys->create(f, Sys->OWRITE|Sys->OTRUNC, 8r666);
@@ -93,12 +81,18 @@ init0(args: list of string)
 			warn(sprint("write %q: %r", f));
 			continue;
 		}
-
+		(ok, dir) := sys->fstat(fd);
+		if(ok != 0) {
+			warn(sprint("stat %q: %r", f));
+			continue;
+		}
 		dsf.state = hg->STnormal;
-		dirty++;
+		dsf.size = int dir.length;
+		dsf.mtime = dir.mtime;
+		ds.dirty++;
 	}
 
-	if(dirty)
+	if(ds.dirty)
 		repo.xwritedirstate(ds);
 }
 

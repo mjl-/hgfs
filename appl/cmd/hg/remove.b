@@ -6,6 +6,8 @@ include "sys.m";
 include "draw.m";
 include "arg.m";
 include "bufio.m";
+include "daytime.m";
+	daytime: Daytime;
 include "readdir.m";
 	readdir: Readdir;
 include "string.m";
@@ -15,7 +17,7 @@ include "tables.m";
 	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	rev, readfile, l2a, inssort, warn, fail: import util;
@@ -34,6 +36,7 @@ init(nil: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
+	daytime = load Daytime Daytime->PATH;
 	readdir = load Readdir Readdir->PATH;
 	str = load String String->PATH;
 	tables = load Tables Tables->PATH;
@@ -66,64 +69,48 @@ dirty: int;
 init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
-
-	ds := repo.xdirstate();
-	if(ds.p2 != hg->nullnode)
-		error("checkout has two parents, is in merge, refusing to update");
-	# xxx make sure dirstate is complete & correct
-
+	ds := hg->xdirstate(repo, 0);
 	root := repo.workroot();
 
-	dirty = 0;
-	base := repo.xworkdir();
-	say(sprint("base %q", base));
-	pathtab := Strhash[string].new(31, nil);
-	for(l := args; l != nil; l = tl l) {
-		path := hg->xsanitize(base+"/"+hd l);
-		if(path == ".")
-			path = "";
-		ll := ds.findall(path);
-		if(ll == nil) {
-			warn(sprint("%q: file not found", path));
-			continue;
-		}
-		for(; ll != nil; ll = tl ll) {
-			dsf := hd ll;
-			p := dsf.path;
-			if(pathtab.find(p) != nil)
-				continue;
-			pathtab.add(p, p);
+	now := daytime->now();
+	for(l := ds.enumerate(repo.xworkdir(), args, 0, 1).t1; l != nil; l = tl l) {
+		f := hd l;
+		p := f.path;
 
-			# xxx need case for modified, missing?
-			case dsf.state {
-			hg->STnormal =>
-				dsf.state = hg->STremove;
-				dirty++;
-				if(sys->remove(hg->xsanitize(root+"/"+p)) != 0)
-					warn(sprint("removing %q: %r", p));
-			hg->STneedmerge =>
-				if(fflag) {
-					dsf.state = hg->STremove;
-					dirty++;
-				} else
-					warn(sprint("%q: file marked as needmerge, ignoring", p));
-			hg->STremove =>
-				;
-			hg->STadd =>
-				if(fflag) {
-					dsf.state = hg->STremove;
-					dirty++;
-				} else
-					warn(sprint("%q: file marked for add, ignoring", p));
-			hg->STuntracked =>
-				warn(sprint("%q: file not tracked, leaving as it is", p));
-			* =>
-				error(sprint("missing case for dirstate file state %d", dsf.state));
+		case f.state {
+		hg->STremove =>
+			;
+		hg->STnormal =>
+			if(f.size < 0 && !fflag) {
+				warn(sprint("%q: modified, refusing to remove without -f", p));
+				continue;
 			}
+			f.state = hg->STremove;
+			f.size = hg->SZdirty;
+			f.mtime = now;
+			ds.dirty++;
+			if(sys->remove(hg->xsanitize(root+"/"+p)) != 0)
+				warn(sprint("removing %q: %r", p));
+		hg->STadd =>
+			if(fflag) {
+				ds.del(f.path);
+				ds.dirty++;
+			} else
+				warn(sprint("%q: file marked for add, refusing to remove without -f", p));
+		hg->STneedmerge =>
+			if(fflag) {
+				f.state = hg->STremove;
+				f.size = hg->SZdirty;
+				f.mtime = now;
+				ds.dirty++;
+			} else
+				warn(sprint("%q: file marked for merge, refusing to remove without -f", p));
+		* =>
+			error(sprint("missing case for dirstate file state %d", f.state));
 		}
 	}
 
-	if(dirty)
+	if(ds.dirty)
 		repo.xwritedirstate(ds);
 }
 

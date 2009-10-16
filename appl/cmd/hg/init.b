@@ -10,7 +10,7 @@ include "string.m";
 	str: String;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	readfile, l2a, inssort, warn, fail: import util;
@@ -65,7 +65,7 @@ init0()
 	fd = sys->create(".hg/requires", Sys->OWRITE|Sys->OTRUNC, 8r666);
 	if(fd == nil)
 		error(sprint("creating .hg/requires"));
-	buf := array of byte "revlogv1\nstore\nfncache\n";
+	buf := array of byte "revlogv1\nstore\n";
 	if(sys->write(fd, buf, len buf) != len buf)
 		error(sprint("write .hg/requires: %r"));
 }

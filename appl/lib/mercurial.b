@@ -24,7 +24,7 @@ include "tables.m";
 	Strhash: import tables;
 include "util0.m";
 	util: Util0;
-	hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
+	eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
 include "mercurial.m";
 
 
@@ -93,41 +93,36 @@ xcreatenodeid(d: array of byte, n1, n2: string): string
 }
 
 
-differs(repo: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int
+differs(repo: ref Repo, mf: ref Mfile): int
 {
-	path := mf.path;
-	(ok, dir) := sys->stat(path);
+	f := repo.workroot()+"/"+mf.path;
+	(ok, dir) := sys->stat(f);
 	if(ok != 0)
 		return 1;
+
 	mfx := (mf.flags & Fexec) != 0;
 	fx := (dir.mode & 8r100) != 0;
 	if(mfx != fx)
 		return 1;
-	if(dir.length == size && dir.mtime == mtime)
-		return 0;
 
-	buf := readfile(path, -1);
+	buf := readfile(f, -1);
 	if(buf == nil)
 		return 1;
 
 	{
-		rl := repo.xopenrevlog(path);
+		rl := repo.xopenrevlog(mf.path);
 		e := rl.xfindnodeid(mf.nodeid, 1);
-		if(e.p1 >= 0)
-			e1 := rl.xfind(e.p1);
-		if(e.p2 >= 0)
-			e2 := rl.xfind(e.p2);
+		p1 := p2 := nullnode;
+		if(e.p1 >= 0) {
+			p1 = rl.xfind(e.p1).nodeid;
+			if(e.p2 >= 0)
+				p2 = rl.xfind(e.p2).nodeid;
+		}
 
-		n1 := n2 := nullnode;
-		if(e1 != nil)
-			n1 = e1.nodeid;
-		if(e2 != nil)
-			n2 = e2.nodeid;
-		(n, err) := createnodeid(buf, n1, n2);
-		return err != nil || mf.nodeid != n;
+		return mf.nodeid != xcreatenodeid(buf, p1, p2);
 	} exception x {
 	"hg:*" =>
-		warn(sprint("%q: %s", path, x[3:]));
+		warn(sprint("%q: %s", mf.path, x[3:]));
 		return 1;
 	}
 }
@@ -286,6 +281,136 @@ xbopencreate(f: string, mode, perm: int): ref Iobuf
 	return b;
 }
 
+xdirstate(r: ref Repo, all: int): ref Dirstate
+{
+	path := r.path+"/dirstate";
+	b := bufio->open(path, Bufio->OREAD);
+	if(b == nil)
+		return ref Dirstate (1, nullnode, nullnode, nil, nil);
+
+	n1 := b.read(p1d := array[20] of byte, len p1d);
+	n2 := b.read(p2d := array[20] of byte, len p2d);
+	if(n1 != len p1d || n2 != len p2d)
+		error(sprint("reading parents: %r"));
+	p1 := hex(p1d);
+	p2 := hex(p2d); 
+	if(p1 == nullnode && p2 != nullnode)
+		error(sprint("p1 nullnode but p2 not, %s", p2));
+	r.xlookup(p1, 1);
+	r.xlookup(p2, 1);
+
+	root := r.workroot();
+
+	buf := array[1+4+4+4+4] of byte;
+	now := daytime->now();
+	tab := Strhash[ref Dsfile].new(101, nil);
+	ds := ref Dirstate (0, p1, p2, nil, nil);
+	for(;;) {
+		off := b.offset();
+		n := b.read(buf, len buf);
+		if(n == 0)
+			break;
+		if(n != len buf)
+			error(sprint("bad dirstate, early eof for path header, want %d, saw %d", len buf, n));
+		dsf := ref Dsfile;
+		o := 0;
+		stb := buf[o++];
+		dsf.state = find(statestrs, sprint("%c", int stb));
+		if(dsf.state < 0)
+			error(sprint("bad state in dirstate at offset %bd, char %#x, %c", off, int stb, int stb));
+		(dsf.mode, o) = g32(buf, o);
+		(dsf.size, o) = g32(buf, o);
+		(dsf.mtime, o) = g32(buf, o);
+		length: int;
+		(length, o) = g32(buf, o);
+		if(length >= 2*1024)
+			error(sprint("implausible path length %d in dirstate", length));
+		n = b.read(namebuf := array[length] of byte, len namebuf);
+		if(n != len namebuf)
+			error("early eof in dirstate while reading path");
+		dsf.path = string namebuf;
+		for(nul := 0; nul < len namebuf; nul++)
+			if(namebuf[nul] == byte '\0') {
+				dsf.path = string namebuf[:nul];
+				dsf.origpath = string namebuf[nul+1:];
+				break;
+			}
+		dsf.missing = 0;
+
+		f := root+"/"+dsf.path;
+		(ok, dir) := sys->stat(f);
+		if(ok != 0) {
+			if(dsf.state != STremove)
+				dsf.missing = 1;
+		} else {
+			case dsf.state {
+			STremove or
+			STadd or
+			STneedmerge =>
+				;
+			STnormal =>
+				if(dsf.size >= 0 && big dsf.size != dir.length) {
+					dsf.mtime = dir.mtime;
+					dsf.size = SZdirty;
+				} else if(dsf.size == SZcheck || dsf.mtime > now-4) {
+					exp := r.xread(dsf.path, ds);
+					cur := xreadfile(f);
+					if(eq(exp, cur))
+						dsf.size = int dir.length;
+					else
+						dsf.size = SZdirty;
+					dsf.mtime = dir.mtime;
+					ds.dirty++;
+				}
+			}
+		}
+		tab.add(dsf.path, dsf);
+		ds.l = dsf::ds.l;
+	}
+
+	if(all)
+		xdirstatewalk(root, "", ds, tab);
+	ds.l = util->rev(ds.l);
+	return ds;
+}
+
+xdirstatewalk(root, path: string, ds: ref Dirstate, tab: ref Strhash[ref Dsfile])
+{
+say(sprint("xdirstatewalk, %q", path));
+	if(path == ".hg")
+		return;
+
+	f := root;
+	if(path != nil)
+		f += "/"+path;
+	fd := sys->open(f, Sys->OREAD);
+	if(fd == nil)
+		error(sprint("open %q: %r", f));
+
+	for(;;) {
+		(n, dirs) := sys->dirread(fd);
+		if(n < 0)
+			error(sprint("dirread %q: %r", f));
+		if(n == 0)
+			break;
+		for(i := 0; i < n; i++) {
+			d := dirs[i];
+			npath := path;
+			if(npath != nil)
+				npath += "/";
+			npath += d.name;
+			if(tab.find(npath) != nil)
+				continue;
+			if((d.mode&Sys->DMDIR) == 0) {
+				dsf := ref Dsfile (STuntracked, d.mode&8r777, SZcheck, d.mtime, npath, nil, 0);
+				ds.l = dsf::ds.l;
+say(sprint("xdirstatewalk, untracked file %q", npath));
+			} else
+				xdirstatewalk(root, npath, ds, tab);
+		}
+	}
+}
+
 
 getline(b: ref Iobuf): string
 {
@@ -434,7 +559,7 @@ Manifest.xpack(m: self ref Manifest): array of byte
 
 Manifest.xparse(d: array of byte, n: string): ref Manifest
 {
-	files: list of ref Manifestfile;
+	files: list of ref Mfile;
 
 	line: array of byte;
 	while(len d > 0) {
@@ -453,13 +578,13 @@ Manifest.xparse(d: array of byte, n: string): ref Manifest
 			#say(sprint("manifest flags=%x", flags));
 		}
 		# say(sprint("nodeid=%q path=%q", string nodeid, string path));
-		mf := ref Manifestfile(string path, 0, string nodeid, flags);
+		mf := ref Mfile(string path, 0, string nodeid, flags);
 		files = mf::files;
 	}
 	return ref Manifest(n, l2a(util->rev(files)));
 }
 
-Manifest.find(m: self ref Manifest, path: string): ref Manifestfile
+Manifest.find(m: self ref Manifest, path: string): ref Mfile
 {
 	for(i := 0; i < len m.files; i++)
 		if(m.files[i].path == path)
@@ -467,12 +592,12 @@ Manifest.find(m: self ref Manifest, path: string): ref Manifestfile
 	return nil;
 }
 
-Manifest.add(m: self ref Manifest, mf: ref Manifestfile)
+Manifest.add(m: self ref Manifest, mf: ref Mfile)
 {
 	for(i := 0; i < len m.files; i++)
 		if(mf.path < m.files[i].path)
 			break;
-	nf := array[len m.files+1] of ref Manifestfile;
+	nf := array[len m.files+1] of ref Mfile;
 	nf[:] = m.files[:i];
 	nf[i] = mf;
 	nf[i+1:] = m.files[i:];
@@ -1047,64 +1172,13 @@ Repo.xmtime(r: self ref Repo, rl: ref Revlog, rev: int): int
 	return c.when+c.tzoff;
 }
 
-Repo.xdirstate(r: self ref Repo): ref Dirstate
-{
-	path := r.path+"/dirstate";
-	b := bufio->open(path, Bufio->OREAD);
-	if(b == nil)
-		return ref Dirstate (nullnode, nullnode, nil);
-
-	n1 := b.read(p1d := array[20] of byte, len p1d);
-	n2 := b.read(p2d := array[20] of byte, len p2d);
-	if(n1 != len p1d || n2 != len p2d)
-		error(sprint("reading parents: %r"));
-	p1 := hex(p1d);
-	p2 := hex(p2d); 
-	if(p1 == nullnode && p2 != nullnode)
-		error(sprint("p1 nullnode but p2 not, %s", p2));
-
-	buf := array[1+4+4+4+4] of byte;
-	l: list of ref Dirstatefile;
-	for(;;) {
-		off := b.offset();
-		n := b.read(buf, len buf);
-		if(n == 0)
-			break;
-		if(n != len buf)
-			error(sprint("bad dirstate, early eof for path header, want %d, saw %d", len buf, n));
-		dsf := ref Dirstatefile;
-		o := 0;
-		stb := buf[o++];
-		dsf.state = find(statestrs, sprint("%c", int stb));
-		if(dsf.state < 0)
-			error(sprint("bad state in dirstate at offset %bd, char %#x, %c", off, int stb, int stb));
-		(dsf.mode, o) = g32(buf, o);
-		(dsf.size, o) = g32(buf, o);
-		(dsf.mtime, o) = g32(buf, o);
-		length: int;
-		(length, o) = g32(buf, o);
-		if(length >= 2*1024)
-			error(sprint("implausible path length %d in dirstate", length));
-		n = b.read(namebuf := array[length] of byte, len namebuf);
-		if(n != len namebuf)
-			error("early eof in dirstate while reading path");
-		dsf.path = string namebuf;
-		for(nul := 0; nul < len namebuf; nul++)
-			if(namebuf[nul] == byte '\0') {
-				dsf.path = string namebuf[:nul];
-				dsf.origpath = string namebuf[nul+1:];
-				break;
-			}
-		l = dsf::l;
-	}
-	return ref Dirstate (p1, p2, util->rev(l));
-}
-
 Dirstate.packedsize(ds: self ref Dirstate): int
 {
 	n := 20+20;
 	for(l := ds.l; l != nil; l = tl l) {
 		f := hd l;
+		if(f.state == STuntracked)
+			continue;
 		n += 1+4+4+4+4+len array of byte f.path;
 		if(f.origpath != nil)
 			n += 1+len array of byte f.origpath;
@@ -1114,6 +1188,11 @@ Dirstate.packedsize(ds: self ref Dirstate): int
 
 Dirstate.pack(ds: self ref Dirstate, buf: array of byte)
 {
+	if(len ds.p1 != 40)
+		error(sprint("bad dirstate p1 %#q", ds.p1));
+	if(len ds.p2 != 40)
+		error(sprint("bad dirstate p2 %#q", ds.p2));
+
 	o := 0;
 	buf[o:] = unhex(ds.p1);
 	o += 20;
@@ -1121,6 +1200,8 @@ Dirstate.pack(ds: self ref Dirstate, buf: array of byte)
 	o += 20;
 	for(l := ds.l; l != nil; l = tl l) {
 		f := hd l;
+		if(f.state == STuntracked)
+			continue;
 		buf[o++] = byte statestrs[f.state][0];
 		o = p32i(buf, o, f.mode);
 		o = p32i(buf, o, f.size);
@@ -1135,7 +1216,7 @@ Dirstate.pack(ds: self ref Dirstate, buf: array of byte)
 	}
 }
 
-Dirstate.find(ds: self ref Dirstate, path: string): ref Dirstatefile
+Dirstate.find(ds: self ref Dirstate, path: string): ref Dsfile
 {
 	for(l := ds.l; l != nil; l = tl l)
 		if((hd l).path == path)
@@ -1143,19 +1224,75 @@ Dirstate.find(ds: self ref Dirstate, path: string): ref Dirstatefile
 	return nil;
 }
 
-Dirstate.findall(ds: self ref Dirstate, pp: string): list of ref Dirstatefile
+Dirstate.findall(ds: self ref Dirstate, pp: string, untracked: int): list of ref Dsfile
 {
-	dir := pp+"/";
-	r: list of ref Dirstatefile;
-	for(l := ds.l; l != nil; l = tl l)
-		if((hd l).path == pp || str->prefix(dir, (hd l).path))
+	pp = xsanitize(pp);
+	if(pp == ".")
+		dir := pp = "";
+	else
+		dir = pp+"/";
+	r: list of ref Dsfile;
+	for(l := ds.l; l != nil; l = tl l) {
+		dsf := hd l;
+		if((dsf.state != STuntracked || untracked) && (dsf.path == pp || str->prefix(dir, dsf.path)))
 			r = hd l::r;
+	}
 	return rev(r);
 }
 
-Dirstate.add(ds: self ref Dirstate, dsf: ref Dirstatefile)
+Dirstate.enumerate(ds: self ref Dirstate, base: string, paths: list of string, untracked, vflag: int): (list of string, list of ref Dsfile)
+{
+	if(paths == nil) {
+		l := ds.findall(base, untracked);
+		if(l == nil)
+			return (base::nil, nil);
+		return (nil, l);
+	}
+
+	tab := Strhash[ref Dsfile].new(101, nil);
+	r: list of ref Dsfile;
+	nomatch: list of string;
+	for(; paths != nil; paths = tl paths) {
+		p := base+"/"+hd paths;
+		n := 0;
+		for(l := ds.findall(p, untracked); l != nil; l = tl l) {
+			dsf := hd l;
+			if(dsf.state != STuntracked)
+				n++;
+			if(tab.find(dsf.path) != nil)
+				continue;
+			tab.add(dsf.path, dsf);
+			r = dsf::r;
+		}
+		if(n == 0) {
+			if(vflag)
+				sys->fprint(sys->fildes(2), "%q: not tracked\n", hd paths);
+			nomatch = hd paths::nomatch;
+		}
+	}
+	return (rev(nomatch), rev(r));
+}
+
+Dirstate.add(ds: self ref Dirstate, dsf: ref Dsfile)
 {
 	ds.l = dsf::ds.l;
+}
+
+Dirstate.del(ds: self ref Dirstate, path: string)
+{
+	r: list of ref Dsfile;
+	for(l := ds.l; l != nil; l = tl l)
+		if((hd l).path != path)
+			r = hd l::r;
+	ds.l = rev(r);
+}
+
+Dirstate.haschanges(ds: self ref Dirstate): int
+{
+	for(l := ds.l; l != nil; l = tl l)
+		if((hd l).isdirty())
+			return 1;
+	return 0;
 }
 
 Repo.xwritedirstate(r: self ref Repo, ds: ref Dirstate)
@@ -1478,6 +1615,35 @@ Repo.xget(r: self ref Repo, revstr, path: string): array of byte
 	return rl.xgetnodeid(mf.nodeid);
 }
 
+xgetmanifest(r: ref Repo, n: string): ref Manifest
+{
+	if(n == nullnode)
+		return ref Manifest (n, array[0] of ref Mfile);
+	return r.xmanifest(r.xlookup(n, 1).t0).t1;
+}
+
+Repo.xread(r: self ref Repo, path: string, ds: ref Dirstate): array of byte
+{
+	# xxx replace xgetmanifest with r.xmanifest when it accepts a nodeid
+	if(ds.context == nil)
+		ds.context = ref Context;
+
+	if(ds.context.m1 == nil)
+		ds.context.m1 = xgetmanifest(r, ds.p1);
+	mf1 := ds.context.m1.find(path);
+	if(mf1 != nil)
+		return r.xopenrevlog(path).xgetnodeid(mf1.nodeid);
+
+	if(ds.context.m2 == nil)
+		ds.context.m2 = xgetmanifest(r, ds.p2);
+	mf2 := ds.context.m2.find(path);
+	if(mf2 != nil)
+		return r.xopenrevlog(path).xgetnodeid(mf2.nodeid);
+
+	error(sprint("%q does not exist in parents", path));
+	return nil; # not reached
+}
+
 Repo.xensuredirs(r: self ref Repo, fullrlpath: string)
 {
 	pre := r.storedir()+"/";
@@ -1503,16 +1669,33 @@ statestr(i: int): string
 {
 	if(i >= 0 && i < len statestrs)
 		return statestrs[i];
-	return "X";
+	error(sprint("bogus state %d", i));
+	return nil; # not reached
 }
 
-Dirstatefile.text(f: self ref Dirstatefile): string
+Dsfile.isdirty(f: self ref Dsfile): int
+{
+	case f.state {
+	STneedmerge or
+	STremove or
+	STadd =>
+		return 1;
+	STuntracked =>
+		return 0;
+	STnormal =>
+		return f.size == SZdirty;
+	}
+	raise "missing case";
+}
+
+Dsfile.text(f: self ref Dsfile): string
 {
 	tm := daytime->local(daytime->now());
 	timestr := sprint("%04d-%02d-%02d %2d:%2d:%2d", tm.year+1900, tm.mon+1, tm.mday, tm.hour, tm.min, tm.sec);
 	s := sprint("%s %03uo %10d %s %q", statestr(f.state), 8r777&f.mode, f.size, timestr, f.path);
 	if(f.origpath != nil)
 		s += sprint(" (from %q)", f.origpath);
+	s += sprint(" missing %d", f.missing);
 	return s;
 }
 
@@ -1883,44 +2066,6 @@ workdir(): string
 	return sys->fd2path(fd);
 }
 
-xworkdirstate(path: string): ref Dirstate
-{
-	ds := ref Dirstate (nil, nil, nil);
-	xworkstatedir0(ds, path, "");
-	ds.l = util->rev(ds.l);
-	return ds;
-}
-
-xworkstatedir0(ds: ref Dirstate, base, pre: string)
-{
-	path := base+"/"+pre;
-	fd := sys->open(path, Sys->OREAD);
-	if(fd == nil)
-		error(sprint("open %q: %r", path));
-	for(;;) {
-		(n, dirs) := sys->dirread(fd);
-		if(n < 0)
-			error(sprint("dirread %q: %r", path));
-		if(n == 0)
-			break;
-		for(i := 0; i < n; i++) {
-			d := dirs[i];
-			if(d.name == ".hg")
-				continue;
-			npre := pre;
-			if(npre != nil)
-				npre += "/";
-			npre += d.name;
-			if((d.mode&Sys->DMDIR) == 0) {
-				dsf := ref Dirstatefile ('n', d.mode&8r777, int d.length, d.mtime, npre, nil);
-				ds.l = dsf::ds.l;
-			} else {
-				xworkstatedir0(ds, base, npre);
-			}
-		}
-	}
-}
-
 breadn(b: ref Iobuf, buf: array of byte, e: int): int
 {
 	s := 0;
@@ -2031,6 +2176,13 @@ Configs.find(c: self ref Configs, sec, name: string): (int, string)
 	return (0, nil);
 }
 
+xreadfile(p: string): array of byte
+{
+	buf := readfile(p, -1);
+	if(buf == nil)
+		error(sprint("%r"));
+	return buf;
+}
 
 p48(buf: array of byte, o: int, v: big): int
 {

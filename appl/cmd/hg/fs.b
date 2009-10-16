@@ -29,7 +29,7 @@ include "util0.m";
 	min, fail, warn, l2a, kill, killgrp, suffix: import util;
 include "mercurial.m";
 	hg: Mercurial;
-	Branch, Tag, Revlog, Repo, Entry, Change, Manifest, Manifestfile: import hg;
+	Branch, Tag, Revlog, Repo, Entry, Change, Manifest, Mfile: import hg;
 include "../../lib/mercurialwire.m";
 	hgwire: Mercurialwire;
 
@@ -1189,7 +1189,7 @@ Tgz: adt {
 	manifest:	ref Manifest;
 
 	data:	array of byte;  # of file-in-progress
-	mf:	array of ref Manifestfile;  # files
+	mf:	array of ref Mfile;  # files
 	mfi:	int;	# index in files
 
 	tgzdata:	array of byte;  # output from filter

@@ -23,7 +23,7 @@ include "filtertool.m";
 	filtertool: Filtertool;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	readfd, rev, join, readfile, l2a, inssort, warn, fail: import util;
@@ -57,7 +57,7 @@ init(nil: ref Draw->Context, args: list of string)
 	hg->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] [-h path] [-v] path ...");
+	arg->setusage(arg->progname()+" [-d] [-h path] [-v] [path ...]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	hg->debug = dflag++;
@@ -84,52 +84,17 @@ init0(args: list of string)
 	tzoff := daytime->local(now).tzoff;
 	say(sprint("have user %q, now %d, tzoff %d", user, now, tzoff));
 
+	ds := hg->xdirstate(repo, 0);
 
-	ds := repo.xdirstate();
-	if(ds.p2 != hg->nullnode)
-		error("checkout has two parents, is in merge, refusing to update");
-	# xxx make sure dirstate is complete & correct
-
-	r: list of ref Dirstatefile;
-	if(args == nil) {
-		for(l := ds.l; l != nil; l = tl l)
-			case (dsf := hd l).state {
-			hg->STuntracked =>
-				;
-			* =>
-				if(hg->STnormal && !isdirty(repo.workroot()+dsf.path, dsf))
-					continue;
-				say(sprint("will be handling file %q", dsf.path));
-				r = dsf::r;
-			}
-	} else {
-		pathtab := Strhash[string].new(31, nil);
-		for(; args != nil; args = tl args) {
-			p := hd args;
-			say(sprint("inspecting argument %q", p));
-			for(l := ds.findall(p); l != nil; l = tl l) {
-				dsf := hd l;
-				if(pathtab.find(p) != nil || dsf.state == hg->STnormal && !isdirty(repo.workroot()+dsf.path, dsf) || dsf.state == hg->STuntracked) {
-					say(sprint("skipping %q", p));
-					continue;
-				}
-				say(sprint("will be handling file %q", dsf.path));
-				r = dsf::r;
-				pathtab.add(p, p);
-			}
-			if(r == nil) {
-				warn(sprint("%q: no files matching", p));
-				continue;
-			}
-		}
-	}
-
+	r: list of ref Dsfile;
+	pathtab := Strhash[ref Dsfile].new(31, nil);
+	if(args == nil)
+		r = inspect(r, ds.l, pathtab, nil);
+	else
+		for(; args != nil; args = tl args)
+			r = inspect(r, ds.findall(hd args, 0), pathtab, hd args);
 	if(r == nil)
 		error("no changes");
-
-	if(vflag)
-		for(l := r; l != nil; l = tl l)
-			say(sprint("committing %q, state %d", (hd l).path, (hd l).state));
 
 	ochrev := repo.xlastrev();
 	link := ochrev+1;
@@ -152,26 +117,31 @@ init0(args: list of string)
 
 	say(sprint("newrev and link is %d, changes p1 %s p2 %s, manifest p1 %s p2 %s", link, cp1, cp2, mp1, mp2));
 
+	warn("message:");
 	msg := string readfd(sys->fildes(0), -1);
 	say(sprint("msg is %q", msg));
+	if(msg == nil)
+		error("empty commit message, aborting");
 
 	files := l2a(r);
 	inssort(files, pathge);
 	filenodeids := array[len files] of string;
 	modfiles: list of string;
+	nds := ref Dirstate (1, hg->nullnode, hg->nullnode, ds.l, nil);
 	for(i := 0; i < len files; i++) {
 		dsf := files[i];
 		path := dsf.path;
-		say(sprint("handling path %q, state %d", path, dsf.state));
+		say("handling "+dsf.text());
+		m.del(path);
 		case dsf.state {
 		hg->STremove =>
-			m.del(path);
 			modfiles = path::modfiles;
+			nds.del(path);
 			continue;
-		hg->STneedmerge or
 		hg->STadd or
+		hg->STneedmerge or
 		hg->STnormal =>
-			m.del(path);
+			;
 		* =>
 			raise "other state?";
 		}
@@ -180,17 +150,16 @@ init0(args: list of string)
 		buf := readfile(f, -1);
 		if(buf == nil)
 			error(sprint("open %q: %r", f));
+		(ok, dir) := sys->stat(f);
+		if(ok != 0)
+			error(sprint("stat %q: %r", f));
 
 		rl := repo.xopenrevlog(path);
 
 		fp1 := fp2 := hg->nullnode;
-		if(m1 != nil)
-			mf1 := m1.find(path);
-		if(mf1 != nil)
+		if(m1 != nil && (mf1 := m1.find(path)) != nil)
 			fp1 = mf1.nodeid;
-		if(m2 != nil)
-			mf2 := m2.find(path);
-		if(mf2 != nil)
+		if(m2 != nil && (mf2 := m2.find(path)) != nil)
 			fp2 = mf2.nodeid;
 
 		say(sprint("adding to revlog for file %#q, fp1 %s, fp2 %s", path, fp1, fp2));
@@ -198,9 +167,13 @@ init0(args: list of string)
 		filenodeids[i] = ne.nodeid;
 		say(sprint("file now at nodeid %s", ne.nodeid));
 
-		mf := ref Manifestfile (path, 8r400, ne.nodeid, 0); # xxx mode
+		mf := ref Mfile (path, dir.mode&8r777, ne.nodeid, 0);
 		m.add(mf);
 		modfiles = path::modfiles;
+
+		dsf.state = hg->STnormal;
+		dsf.size = int dir.length;
+		dsf.mtime = dir.mtime;
 	}
 
 	say("adding to manifest");
@@ -215,8 +188,7 @@ init0(args: list of string)
 	say(cmsg);
 	ce := revlogadd(cl, cp1, cp2, link, array of byte cmsg);
 
-	# xxx should probably fill in most files as normal
-	nds := ref Dirstate (ce.nodeid, hg->nullnode, nil);
+	nds.p1 = ce.nodeid;
 	repo.xwritedirstate(nds);
 }
 
@@ -295,23 +267,37 @@ findrev(ents: array of ref Entry, n: string): int
 	return -1; # not reached
 }
 
-isdirty(path: string, dsf: ref Dirstatefile): int
+inspect(r, l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], path: string): list of ref Dsfile
 {
-	(ok, dir) := sys->stat(path);
-	if(ok != 0) {
-		warn(sprint("stat %q: %r", path));
-		return 1;
+	n := 0;
+	for(; l != nil; l = tl l) {
+		dsf := hd l;
+		if(tab.find(dsf.path) != nil)
+			continue;
+		case dsf.state {
+		hg->STuntracked =>
+			continue;
+		hg->STnormal or
+		hg->STneedmerge =>
+			if(hg->STnormal && dsf.size < 0)
+				continue;
+			warn(sprint("M %q", dsf.path));
+		hg->STremove =>
+			warn(sprint("R %q", dsf.path));
+		hg->STadd =>
+			warn(sprint("A %q", dsf.path));
+		}
+
+		tab.add(dsf.path, dsf);
+		r = dsf::r;
+		n++;
 	}
-	fx := (dsf.mode & 8r100) != 0;
-	dx := (dir.mode & 8r100) != 0;
-	if(fx != dx)
-		return 1;
-	if(int dir.length == dsf.size && dir.mtime == dsf.mtime)
-		return 0;
-	return 1;
+	if(n == 0 && path != nil)
+		warn(sprint("%q: no matches", path));
+	return r;
 }
 
-pathge(a, b: ref Dirstatefile): int
+pathge(a, b: ref Dsfile): int
 {
 	return a.path >= b.path;
 }

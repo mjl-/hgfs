@@ -23,7 +23,7 @@ include "filtertool.m";
 	filtertool: Filtertool;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry, Patch: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Patch: import hg;
 include "mhttp.m";
 include "../../lib/mercurialremote.m";
 	hgrem: Mercurialremote;
@@ -36,7 +36,6 @@ HgClone: module {
 
 dflag: int;
 Cflag: int;
-repo: ref Repo;
 hgpath := "";
 revstr: string;
 path: string;
@@ -153,6 +152,10 @@ init0()
 	}
 
 	warn(sprint("added %d changesets with %d changes to %d files", tablength(chtab), nchanges, nfiles));
+
+	ds := ref Dirstate (1, hg->nullnode, hg->nullnode, nil, nil);
+	repo := Repo.xopen(dest+"/.hg");
+	repo.xwritedirstate(ds);
 }
 
 revlogwrite(b: ref Iobuf, basedir, path: string, chtab: ref Strhash[ref Entry]): ref Strhash[ref Entry]

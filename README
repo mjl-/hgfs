@@ -15,17 +15,10 @@ repositories (also undocumented).
 
 # install
 
-first, make sure you have "util", "http", "filtertool" installed.
+first, make sure you have "util", "http", "filtertool", "web" installed.
 
 change mkconfig if you do not have $ROOT set.  create the directory
 $ROOT/dis/hg.  now "mk install" to compile and install the files.
-
-if you want to install hg/websrv, the http pull protocol server,
-you'll need need "web":
-
-	http://www.ueber.net/code/r/web
-
-and a separate "mk install" in appl/cmd/cgi/.
 
 when building from within inferno, insert SYSHOST=Inferno and ROOT=
 in the mk invocations to override the values in the mkconfig.
@@ -46,14 +39,13 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- hg/add, hg/remove, hg/commit: make sure dirstate is complete before using it
-- hg/clone: write dirstate?  write other states.
+- for dirstate, handle needmerge more like modified?  i.e. verify that it really changed, especially during commit.
+- use nodeids more often instead of revision numbers.  then we can make repo.xmanifest() return an empty Manifest when nullnode is requested.  useful for hg/update too.
 - make lib out of code for commit,clone,pull
 - read up on all the formats.  dirstate, undo.dirstate undo.branch
   (for rollback), journal.dirstate, journal.branch, wlock;  lock,
   journal, fncache, etc.;  http://mercurial.selenic.com/wiki/FileFormats
 - hg/commit: split into .d files at 128k size of .i
-- hg/identify:  print + for local changes, multiple parents
 
 - cgi/websrv: test with various client versions
 

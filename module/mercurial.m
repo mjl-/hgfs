@@ -12,7 +12,7 @@ Mercurial: module
 	xcreatenodeid:	fn(d: array of byte, n1, n2: string): string;
 	unhex:		fn(n: string): array of byte;
 	hex:		fn(d: array of byte): string;
-	differs:	fn(r: ref Repo, size: big, mtime: int, mf: ref Manifestfile): int;
+	differs:	fn(r: ref Repo, mf: ref Mfile): int;
 	escape:		fn(path: string): string;
 	xsanitize:	fn(path: string): string;
 	ensuredirs:	fn(root, path: string);
@@ -21,6 +21,8 @@ Mercurial: module
 	xentrylogtext:	fn(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int): string;
 	xopencreate:	fn(f: string, mode, perm: int): ref Sys->FD;
 	xbopencreate:	fn(f: string, mode, perm: int): ref Bufio->Iobuf;
+	xdirstate:	fn(r: ref Repo, all: int): ref Dirstate;
+	xparsetags:	fn(r: ref Repo, s: string): list of ref Tag;
 
 	Entrysize:	con 64;
 
@@ -40,8 +42,8 @@ Mercurial: module
 		text:	fn(c: self ref Change): string;
 	};
 
-	Flink, Fexec:	con 1<<iota;  # Manifestfile.flags
-	Manifestfile: adt {
+	Flink, Fexec:	con 1<<iota;  # Mfile.flags
+	Mfile: adt {
 		path:	string;
 		mode:	int;
 		nodeid:	string;
@@ -50,40 +52,51 @@ Mercurial: module
 
 	Manifest: adt {
 		nodeid:	string;
-		files:	array of ref Manifestfile;
+		files:	array of ref Mfile;
 
 		xpack:	fn(m: self ref Manifest): array of byte;
 		xparse:	fn(data: array of byte, n: string): ref Manifest;
-		find:	fn(m: self ref Manifest, path: string): ref Manifestfile;
-		add:	fn(m: self ref Manifest, mf: ref Manifestfile);
+		find:	fn(m: self ref Manifest, path: string): ref Mfile;
+		add:	fn(m: self ref Manifest, mf: ref Mfile);
 		del:	fn(m: self ref Manifest, path: string): int;
 	};
 
 
-	STnormal, STneedmerge, STremove, STadd, STuntracked: con iota; # Dirstatefile.state
-	SZcheck, SZdirty: con iota;
-	Dirstatefile: adt {
+	# note: STuntracked is not stored in file, only for internal purposes
+	STnormal, STneedmerge, STremove, STadd, STuntracked: con iota; # Dsfile.state
+	SZcheck, SZdirty: con -1-iota;
+	Dsfile: adt {
 		state:	int;
 		mode:	int;
 		size:	int;
 		mtime:	int;
 		path:	string;
 		origpath:	string;	# only non-nil in case of copy/move
+		missing:	int;  # note: not in dir state file.  not set for STremove
 
-		text:	fn(f: self ref Dirstatefile): string;
+		isdirty:fn(f: self ref Dsfile): int;
+		text:	fn(f: self ref Dsfile): string;
+	};
+
+	Context: adt {
+		m1, m2:	ref Manifest;	# initially both nil, filled by Repo.xread
 	};
 
 	Dirstate: adt {
+		dirty:	int;
 		p1, p2:	string;
-		l:	list of ref Dirstatefile;
+		l:	list of ref Dsfile;
+		context:	ref Context;
 
 		packedsize:	fn(e: self ref Dirstate): int;
 		pack:	fn(e: self ref Dirstate, buf: array of byte);
-		find:	fn(d: self ref Dirstate, path: string): ref Dirstatefile;
-		findall:	fn(d: self ref Dirstate, pp: string): list of ref Dirstatefile;
-		add:	fn(d: self ref Dirstate, dsf: ref Dirstatefile);
+		find:	fn(d: self ref Dirstate, path: string): ref Dsfile;
+		findall:	fn(d: self ref Dirstate, pp: string, untracked: int): list of ref Dsfile;
+		enumerate:	fn(d: self ref Dirstate, base: string, paths: list of string, untracked, vflag: int): (list of string, list of ref Dsfile);
+		add:	fn(d: self ref Dirstate, dsf: ref Dsfile);
+		del:	fn(d: self ref Dirstate, path: string);
+		haschanges:	fn(d: self ref Dirstate): int;
 	};
-	xworkdirstate:	fn(path: string): ref Dirstate;
 
 
 	Tag: adt {
@@ -91,7 +104,6 @@ Mercurial: module
 		n:	string;
 		rev:	int;
 	};
-	xparsetags:	fn(r: ref Repo, s: string): list of ref Tag;
 
 	Branch: adt {
 		name:	string;
@@ -167,17 +179,20 @@ Mercurial: module
 		cl:		ref Revlog;
 		ml:		ref Revlog;
 
+		name:		fn(r: self ref Repo): string;
+		workroot:	fn(r: self ref Repo): string;
+		storedir:	fn(r: self ref Repo): string;
+		isstore:	fn(r: self ref Repo): int;
+		isrevlogv1:	fn(r: self ref Repo): int;
+
 		xopen:		fn(path: string): ref Repo;
 		xfind:		fn(path: string): ref Repo;
-		name:		fn(r: self ref Repo): string;
 		xopenrevlog:	fn(r: self ref Repo, path: string): ref Revlog;
 		xmanifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest);
 		xlastrev:	fn(r: self ref Repo): int;
 		xchange:	fn(r: self ref Repo, rev: int): ref Change;
 		xmtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): int;
-		xdirstate:	fn(r: self ref Repo): ref Dirstate;
 		xwritedirstate:	fn(r: self ref Repo, ds: ref Dirstate);
-		workroot:	fn(r: self ref Repo): string;
 		xworkdir:	fn(r: self ref Repo): string;
 		xtags:		fn(r: self ref Repo): list of ref Tag;
 		xrevtags:	fn(r: self ref Repo, revstr: string): list of ref Tag;
@@ -189,14 +204,10 @@ Mercurial: module
 		xmanifestlog:	fn(r: self ref Repo): ref Revlog;
 		xlookup:	fn(r: self ref Repo, rev: string, need: int): (int, string);
 		xget:		fn(r: self ref Repo, revstr, path: string): array of byte;
-
+		xread:		fn(r: self ref Repo, path: string, ds: ref Dirstate): array of byte;
 		escape:		fn(r: self ref Repo, path: string): string;
 		xunescape:	fn(r: self ref Repo, path: string): string;
-		storedir:	fn(r: self ref Repo): string;
-		isstore:	fn(r: self ref Repo): int;
-		isrevlogv1:	fn(r: self ref Repo): int;
 		xensuredirs:	fn(r: self ref Repo, fullrlpath: string);
-
 		xreadconfig:	fn(r: self ref Repo): ref Config;
 	};
 

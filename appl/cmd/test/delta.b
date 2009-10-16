@@ -10,7 +10,7 @@ include "string.m";
 	str: String;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change: import hg;
 
 HgDelta: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);

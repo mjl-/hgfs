@@ -23,7 +23,7 @@ include "util0.m";
 	max, g32i, hex, hasstr, rev, join, prefix, suffix, readfd, l2a, inssort, warn, fail: import util;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry, Patch, Configs: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Patch, Configs: import hg;
 include "mhttp.m";
 include "../../lib/mercurialremote.m";
 	hgrem: Mercurialremote;

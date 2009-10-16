@@ -13,7 +13,7 @@ include "tables.m";
 	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	rev, join, max, readfile, l2a, inssort, warn, fail: import util;

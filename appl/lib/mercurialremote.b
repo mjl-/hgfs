@@ -18,7 +18,7 @@ include "util0.m";
 	droptl, hasstr, rev, join, prefix, suffix, readfd, l2a, inssort, warn, fail: import util;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry, Config: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Config: import hg;
 include "mercurialremote.m";
 
 dflag: int;

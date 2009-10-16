@@ -5,7 +5,6 @@ TARG=\
 	tar.dis\
 	log.dis\
 	fs.dis\
-	dirstate.dis\
 	status.dis\
 	readrevlog.dis\
 	update.dis\

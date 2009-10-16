@@ -13,7 +13,7 @@ include "util0.m";
 	rev, l2a, warn, fail, readfile: import util;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Patch, Hunk: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Patch, Hunk: import hg;
 
 HgTestapply: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);

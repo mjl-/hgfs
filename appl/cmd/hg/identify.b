@@ -13,7 +13,7 @@ include "tables.m";
 	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry, Tag: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Tag: import hg;
 include "util0.m";
 	util: Util0;
 	join, readfile, l2a, inssort, warn, fail: import util;
@@ -59,9 +59,7 @@ init(nil: ref Draw->Context, args: list of string)
 init0()
 {
 	repo := Repo.xfind(hgpath);
-	ds := repo.xdirstate();
-	if(ds.p2 != hg->nullnode)
-		error("checkout has two parents, is in merge, refusing to update");
+	ds := hg->xdirstate(repo, 0);
 
 	branch := repo.xworkbranch();
 	tags := repo.xrevtags(ds.p1);
@@ -70,9 +68,12 @@ init0()
 		revtags = (hd l).name::revtags;
 	revtags = util->rev(revtags);
 
-	# xxx should show + after nodeid when local modifications exist, and probably multiple parents too, somehow.
 	# xxx should we use branch and tag of ds.p2 too?
 	s := ds.p1[:12];
+	if(ds.p2 != hg->nullnode)
+		s += "+"+ds.p2[:12];
+	if(ds.haschanges())
+		s += "+";
 	if(branch != "default")
 		s += sprint(" (%s)", branch);
 	if(revtags != nil)

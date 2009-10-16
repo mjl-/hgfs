@@ -15,7 +15,7 @@ include "tables.m";
 	Strhash: import tables;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	rev, readfile, l2a, inssort, warn, fail: import util;
@@ -58,19 +58,12 @@ init(nil: ref Draw->Context, args: list of string)
 	}
 }
 
-dirty: int;
 init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
-
-	ds := repo.xdirstate();
-	if(ds.p2 != hg->nullnode)
-		error("checkout has two parents, is in merge, refusing to update");
-	# xxx makes ure dirstate is complete & correct
-
+	ds := hg->xdirstate(repo, 0);
 	root := repo.workroot();
 
-	dirty = 0;
 	if(args == nil) {
 		add(ds, root, ".", 0);
 	} else {
@@ -80,7 +73,7 @@ init0(args: list of string)
 			add(ds, root, hg->xsanitize(base+"/"+hd l), 1);
 	}
 
-	if(dirty)
+	if(ds.dirty)
 		repo.xwritedirstate(ds);
 }
 
@@ -101,11 +94,15 @@ add0(ds: ref Dirstate, root, path: string, dir: Sys->Dir, direct: int)
 
 	dsf := ds.find(path);
 	if(dsf == nil || dsf.state == hg->STuntracked) {
-		ndsf := ref Dirstatefile (hg->STadd, dir.mode&8r500, int dir.length, dir.mtime, path, nil);
-		ds.add(ndsf);
+		add := dsf == nil;
+		if(dsf == nil)
+			dsf = ref Dsfile;
+		*dsf = Dsfile (hg->STadd, dir.mode&8r777, int dir.length, dir.mtime, path, nil, 0);
+		if(add)
+			ds.add(dsf);
 		if(!direct)
 			warn(sprint("%q", path));
-		dirty++;
+		ds.dirty++;
 	} else if(direct)
 		warn(sprint("%q already tracked", path));
 }

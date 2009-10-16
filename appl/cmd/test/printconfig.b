@@ -8,7 +8,7 @@ include "arg.m";
 include "bufio.m";
 include "mercurial.m";
 	hg: Mercurial;
-	Configs, Config, Section, Dirstate, Dirstatefile, Revlog, Repo, Change, Manifest, Manifestfile, Entry: import hg;
+	Configs, Config, Section, Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	warn, fail: import util;
