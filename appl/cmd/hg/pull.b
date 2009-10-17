@@ -311,21 +311,21 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 		
 		p1rev := p2rev := -1;
 		if(p1 != hg->nullnode)
-			p1rev = findrev("p1", rev, tab, p1);
+			p1rev = (p1e := findentry("p1", rev, tab, p1)).rev;
 		if(p2 != hg->nullnode)
-			p2rev = findrev("p2", rev, tab, p2);
+			p2rev = findentry("p2", rev, tab, p2).rev;
 
 		selfrev := nents++;
 		linkrev := selfrev;
 		if(!ischlog)
-			linkrev = findrev("link", rev, chtab, link);
+			linkrev = findentry("link", rev, chtab, link).rev;
 
 		if(selfrev == firstrev) {
 			if(p1rev >= 0) {
 				# first change, relative to p1
-				base = p1rev;
-				current = rl.xget(base);
-				say(sprint("first change relative to p1 %s (%d)", p1, p1rev));
+				base = p1e.base;
+				current = rl.xget(p1rev);
+				say(sprint("first change relative to p1 %s (%d, base %d)", p1, p1rev, base));
 				say(sprint("first data is %q", string current));
 			} else {
 				if(len p.l != 1 || (c := hd p.l).start != 0 || c.end != 0)
@@ -334,9 +334,11 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 			deltasizes = 0; # xxx fix
 		}
 
+		say(sprint("new entry: selfrev %d p1rev %d p2rev %d linkrev %d (base %d)", selfrev, p1rev, p2rev, linkrev, base));
 
 		data: array of byte;
 		if(len p.l == 1 && (c := hd p.l).start == 0 && c.end == len current) {
+			say("patch covers entire file, storing full copy");
 			base = selfrev;
 			data = current = (hd p.l).buf;
 			deltasizes = 0;
@@ -353,6 +355,7 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 		} else {
 			current = p.apply(current);
 			if(selfrev == firstrev && p1rev >= 0 && p1rev != selfrev-1 || deltasizes+len delta > 2*len current) {
+				say("delta against p1 which is not previous or delta's too big, storing full copy");
 				base = selfrev;
 				data = current;
 				deltasizes = 0;
@@ -367,6 +370,7 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 					data = nd;
 				}
 			} else {
+				say("storing delta");
 				data = delta;
 				deltasizes += len delta;
 
@@ -379,6 +383,7 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 		if(nrev != rev)
 			error(sprint("nodeid mismatch, expected %s saw %s", rev, nrev));
 
+		say(sprint("new base %d", base));
 		flags := 0;
 		e := ref Entry(selfrev, offset, big 0, flags, len data, len current, base, linkrev, p1rev, p2rev, rev);
 
@@ -405,12 +410,12 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 	return tab;
 }
 
-findrev(name, rev: string, tab: ref Strhash[ref Entry], n: string): int
+findentry(name, rev: string, tab: ref Strhash[ref Entry], n: string): ref Entry
 {
 	e := tab.find(n);
 	if(e == nil)
 		error(sprint("missing %s %s for nodeid %s", name, n, rev));
-	return e.rev;
+	return e;
 }
 
 bg32(b: ref Iobuf): int

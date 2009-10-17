@@ -188,7 +188,8 @@ Mercurial: module
 		xopen:		fn(path: string): ref Repo;
 		xfind:		fn(path: string): ref Repo;
 		xopenrevlog:	fn(r: self ref Repo, path: string): ref Revlog;
-		xmanifest:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest);
+		xrevision:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest);
+		xmanifest:	fn(r: self ref Repo, n: string): ref Manifest;
 		xlastrev:	fn(r: self ref Repo): int;
 		xchange:	fn(r: self ref Repo, rev: int): ref Change;
 		xmtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): int;

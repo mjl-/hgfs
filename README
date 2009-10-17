@@ -39,8 +39,8 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- use nodeids more often instead of revision numbers.  then we can make repo.xmanifest() return an empty Manifest when nullnode is requested.  useful for hg/update too.
 - for dirstate, handle needmerge more like modified?  i.e. verify that it really changed, especially during commit.
+- for commit,update,etc, handle dirstate with p1 & p2 (merge).
 - make lib out of code for commit,clone,pull
 - read up on all the formats.  dirstate, undo.dirstate undo.branch
   (for rollback), journal.dirstate, journal.branch, wlock;  lock,

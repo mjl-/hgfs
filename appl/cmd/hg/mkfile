@@ -14,7 +14,7 @@ TARG=\
 	clone.dis\
 	verify.dis\
 	add.dis\
-	remove.dis\
+	rm.dis\
 	revert.dis\
 	heads.dis\
 	commit.dis\

@@ -55,21 +55,21 @@ init0()
 {
 	repo := Repo.xfind(hgpath);
 	say("found repo");
-	(change, manifest) := repo.xmanifest(revision);
+	(c, m) := repo.xrevision(revision);
 	say("have change & manifest");
 
 	if(vflag) {
-		warn(sprint("%s\n", change.text()));
+		warn(sprint("%s\n", c.text()));
 		warn(sprint("manifest:\n"));
-		for(i := 0; i < len manifest.files; i++) {
-			file := manifest.files[i];
+		for(i := 0; i < len m.files; i++) {
+			file := m.files[i];
 			warn(sprint("%q %q\n", file.nodeid, file.path));
 		}
 		warn("\n");
 	}
 
-	for(i := 0; i < len manifest.files; i++) {
-		file := manifest.files[i];
+	for(i := 0; i < len m.files; i++) {
+		file := m.files[i];
 		say(sprint("reading file %q, nodeid %q", file.path, file.nodeid));
 		rl := repo.xopenrevlog(file.path);
 		d := rl.xgetnodeid(file.nodeid);

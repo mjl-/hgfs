@@ -37,6 +37,7 @@ dflag: int;
 vflag: int;
 repo: ref Repo;
 hgpath := "";
+msg: string;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -57,12 +58,15 @@ init(nil: ref Draw->Context, args: list of string)
 	hg->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] [-h path] [-v] [path ...]");
+	arg->setusage(arg->progname()+" [-d] [-h path] [-v] [-m msg] [path ...]");
 	while((c := arg->opt()) != 0)
 		case c {
 		'd' =>	hg->debug = dflag++;
 		'h' =>	hgpath = arg->earg();
 		'v' =>	vflag++;
+		'm' =>	msg = arg->earg();
+			if(msg == nil)
+				arg->usage();
 		* =>	arg->usage();
 		}
 	args = arg->argv();
@@ -98,30 +102,20 @@ init0(args: list of string)
 
 	ochrev := repo.xlastrev();
 	link := ochrev+1;
-	if(ochrev == -1)
-		m := ref Manifest (hg->nullnode, nil);
-	else
-		(nil, m) = repo.xmanifest(ochrev);
 
-	cp1 := ds.p1;
-	cp2 := ds.p2;
-	mp1 := mp2 := hg->nullnode;
-	if(cp1 != hg->nullnode)
-		(c1, m1) := repo.xmanifest(repo.xlookup(cp1, 1).t0);
-	if(cp2 != hg->nullnode)
-		(c2, m2) := repo.xmanifest(repo.xlookup(cp2, 1).t0);
-	if(c1 != nil)
-		mp1 = c1.manifestnodeid;
-	if(c2 != nil)
-		mp2 = c2.manifestnodeid;
+	m1 := repo.xmanifest(ds.p1);
+	m2 := repo.xmanifest(ds.p2);
+	m := manifestmerge(m1, m2);
 
-	say(sprint("newrev and link is %d, changes p1 %s p2 %s, manifest p1 %s p2 %s", link, cp1, cp2, mp1, mp2));
+	say(sprint("newrev and link is %d, changes p1 %s p2 %s, manifest p1 %s p2 %s", link, ds.p1, ds.p2, m1.nodeid, m2.nodeid));
 
-	warn("message:");
-	msg := string readfd(sys->fildes(0), -1);
-	say(sprint("msg is %q", msg));
-	if(msg == nil)
-		error("empty commit message, aborting");
+	if(msg == nil) {
+		warn("message:");
+		msg = string readfd(sys->fildes(0), -1);
+		say(sprint("msg is %q", msg));
+		if(msg == nil)
+			error("empty commit message, aborting");
+	}
 
 	files := l2a(r);
 	inssort(files, pathge);
@@ -179,14 +173,14 @@ init0(args: list of string)
 	say("adding to manifest");
 	ml := repo.xmanifestlog();
 	mbuf := m.xpack();
-	me := revlogadd(ml, mp1, mp2, link, mbuf);
+	me := revlogadd(ml, m1.nodeid, m2.nodeid, link, mbuf);
 
 	say("adding to changelog");
 	cl := repo.xchangelog();
 	cmsg := sprint("%s\n%s\n%d %d\n%s\n\n%s", me.nodeid, user, now, tzoff, join(rev(modfiles), "\n"), msg);
 	say(sprint("change message:"));
 	say(cmsg);
-	ce := revlogadd(cl, cp1, cp2, link, array of byte cmsg);
+	ce := revlogadd(cl, ds.p1, ds.p2, link, array of byte cmsg);
 
 	nds.p1 = ce.nodeid;
 	repo.xwritedirstate(nds);
@@ -274,12 +268,13 @@ inspect(r, l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], path: string): l
 		dsf := hd l;
 		if(tab.find(dsf.path) != nil)
 			continue;
+say("inspect: "+dsf.text());
 		case dsf.state {
 		hg->STuntracked =>
 			continue;
 		hg->STnormal or
 		hg->STneedmerge =>
-			if(hg->STnormal && dsf.size < 0)
+			if(dsf.state == hg->STnormal && dsf.size >= 0)
 				continue;
 			warn(sprint("M %q", dsf.path));
 		hg->STremove =>
@@ -295,6 +290,32 @@ inspect(r, l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], path: string): l
 	if(n == 0 && path != nil)
 		warn(sprint("%q: no matches", path));
 	return r;
+}
+
+manifestmerge(m1, m2: ref Manifest): ref Manifest
+{
+	l: list of ref Mfile;
+	i1 := i2 := 0;
+	for(;;) {
+		if(i1 < len m1.files)
+			p1 := (f1 := m1.files[i1]).path;
+		if(i2 < len m2.files)
+			p2 := (f2 := m2.files[i2]).path;
+		if(p1 == p2) {
+			if(p1 == nil)
+				break;
+			l = ref *f1::l;
+			i1++;
+			i2++;
+		} else if(p2 == nil || p1 < p2) {
+			l = ref *f1::l;
+			i1++;
+		} else {
+			l = ref *f2::l;
+			i2++;
+		}
+	}
+	return ref Manifest (nil, l2a(rev(l)));
 }
 
 pathge(a, b: ref Dsfile): int

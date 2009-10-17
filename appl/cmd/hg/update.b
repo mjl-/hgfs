@@ -75,17 +75,15 @@ init0(revstr: string)
 	(rev, nodeid) := repo.xlookup(revstr, 1);
 	say(sprint("new rev %d nodeid %q, revstr %q", rev, nodeid, revstr));
 
-	(oc, om) := repo.xmanifest(orev);
+	(oc, om) := repo.xrevision(orev);
 	(nil, obranch) := oc.findextra("branch");
 
 	nbranch: string;
-	if(nodeid == hg->nullnode)
-		nm := ref Manifest (hg->nullnode, nil);
-	else {
-		nc: ref Change;
-		(nc, nm) = repo.xmanifest(rev);
+	nm := repo.xmanifest(nodeid);
+	if(nodeid != hg->nullnode) {
+		(nc, nil) := repo.xrevision(rev);
 		(nil, nbranch) = nc.findextra("branch");
-	} 
+	}
 
 	wbranch := repo.xworkbranch();
 	if(obranch == nil) obranch = "default";

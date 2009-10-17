@@ -334,7 +334,7 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, cents, ments, sel: array of ref 
 
 		c: ref Change;
 		m: ref Manifest;
-		(c, m) = r.xmanifest(ce.rev);
+		(c, m) = r.xrevision(ce.rev);
 		mn := c.manifestnodeid;
 		mi := xfindnodeid(ments, mn);
 		me := ments[mi];

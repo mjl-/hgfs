@@ -1137,7 +1137,7 @@ Repo.xopenrevlog(r: self ref Repo, path: string): ref Revlog
 }
 
 
-Repo.xmanifest(r: self ref Repo, rev: int): (ref Change, ref Manifest)
+Repo.xrevision(r: self ref Repo, rev: int): (ref Change, ref Manifest)
 {
 	say("repo.manifest");
 	cl := r.xchangelog();
@@ -1148,6 +1148,17 @@ Repo.xmanifest(r: self ref Repo, rev: int): (ref Change, ref Manifest)
 	md := ml.xgetnodeid(c.manifestnodeid);
 	m := Manifest.xparse(md, c.manifestnodeid);
 	return (c, m);
+}
+
+Repo.xmanifest(r: self ref Repo, n: string): ref Manifest
+{
+	if(n == nullnode)
+		return ref Manifest (n, array[0] of ref Mfile);
+	rev := r.xlookup(n, 1).t0;
+	c := r.xchange(rev);
+	ml := r.xmanifestlog();
+	md := ml.xgetnodeid(c.manifestnodeid);
+	return Manifest.xparse(md, c.manifestnodeid);
 }
 
 Repo.xlastrev(r: self ref Repo): int
@@ -1348,7 +1359,7 @@ Repo.xtags(r: self ref Repo): list of ref Tag
 	heads := r.xheads();
 	for(i := len heads-1; i >= 0; i--) {
 		e := heads[i];
-		(nil, m) := r.xmanifest(e.rev);
+		(nil, m) := r.xrevision(e.rev);
 		mf := m.find(".hgtags");
 		if(mf == nil)
 			continue;
@@ -1605,7 +1616,7 @@ Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 Repo.xget(r: self ref Repo, revstr, path: string): array of byte
 {
 	(rev, nil) := r.xlookup(revstr, 1);
-	(nil, m) := r.xmanifest(rev);
+	(nil, m) := r.xrevision(rev);
 	mf := m.find(path);
 	if(mf == nil)
 		error(sprint("file %#q not in revision %q", path, revstr));
@@ -1617,7 +1628,7 @@ xgetmanifest(r: ref Repo, n: string): ref Manifest
 {
 	if(n == nullnode)
 		return ref Manifest (n, array[0] of ref Mfile);
-	return r.xmanifest(r.xlookup(n, 1).t0).t1;
+	return r.xrevision(r.xlookup(n, 1).t0).t1;
 }
 
 Repo.xread(r: self ref Repo, path: string, ds: ref Dirstate): array of byte

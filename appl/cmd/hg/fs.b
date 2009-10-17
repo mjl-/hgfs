@@ -351,7 +351,7 @@ xdoread(m: ref Tmsg.Read)
 	Qmanifestrev =>
 		if(m.offset == big 0 || f.data == nil) {
 			(rev, nil) := revgen(f.path);
-			(nil, mm) := repo.xmanifest(rev);
+			(nil, mm) := repo.xrevision(rev);
 			f.data = array of byte manifesttext(mm);
 		}
 		srv.reply(styxservers->readbytes(m, f.data));
@@ -359,7 +359,7 @@ xdoread(m: ref Tmsg.Read)
 	Qmanifestfullrev =>
 		if(m.offset == big 0 || f.data == nil) {
 			(rev, nil) := revgen(f.path);
-			(nil, mm) := repo.xmanifest(rev);
+			(nil, mm) := repo.xrevision(rev);
 			f.data = array of byte manifestfulltext(mm);
 		}
 		srv.reply(styxservers->readbytes(m, f.data));
@@ -940,8 +940,8 @@ treeget(rev: int): ref Revtree
 {
 	rt := revtreetab.find(rev);
 	if(rt == nil) {
-		(change, manifest) := repo.xmanifest(rev);
-		rt = Revtree.new(change, manifest, rev);
+		(c, m) := repo.xrevision(rev);
+		rt = Revtree.new(c, m, rev);
 		if(revtreesize >= revtreemax)
 			treepurge();
 		else
@@ -1226,7 +1226,7 @@ Tgz: adt {
 
 Tgz.new(rev: int): ref Tgz
 {
-	(nil, mm) := repo.xmanifest(rev);
+	(nil, mm) := repo.xrevision(rev);
 
 	rq := deflate->start("h");
 	msg := <-rq;
