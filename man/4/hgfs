@@ -76,6 +76,11 @@ Read the log message for revision
 Read the manifest for revision
 .IR n .
 .TP
+.BI manifestfull/ n
+Like
+.B manifest/
+but lines have the nodeid for the path as first token.
+.TP
 .BI tgz/ reponame-n.tgz
 Read the .tgz for revision
 .IR n .
@@ -95,7 +100,7 @@ revision is walked to.  This means that a walk to ``tip'' and a
 subsequent commit to the repository will not update the open file.
 .PP
 For brevity, listing the contents of
-.BR files ", " log " and " manifest
+.BR files ", " log ", " manifest " and " manifestfull
 will only list files with the names of tags, tips of branches (in the form ``branch-tip''),
 and ``tip'', not all revision numbers.  All revisions can be walked
 to though.

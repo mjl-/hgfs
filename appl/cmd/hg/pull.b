@@ -38,7 +38,7 @@ dflag: int;
 Cflag: int;
 repo: ref Repo;
 hgpath := "";
-revstr := "tip";
+revstr: string;
 source: string;
 
 init(nil: ref Draw->Context, args: list of string)
@@ -98,7 +98,11 @@ init0()
 	warn("searching for changes");
 	remrepo := Remrepo.xnew(repo, source);
 	newheads: list of string;
-	for(heads := remrepo.xheads(); heads != nil; heads = tl heads) {
+	if(revstr != nil)
+		heads := remrepo.xlookup(revstr)::nil;
+	else
+		heads = remrepo.xheads();
+	for(; heads != nil; heads = tl heads) {
 		say(sprint("looking up remote head %s in local repo", fmtnode(hd heads)));
 		if(!isknown(hd heads))
 			newheads = hd heads::newheads;
@@ -218,7 +222,7 @@ isknown(n: string): int
 # in between are the indexes 1,2,4,8 etc
 # if we know about nodes[1] we are looking for nodes[0]
 # if we know about nodes[2] we are looking for nodes[1]
-# otherwise we have to refine our search, between the two inner-most known nodes
+# otherwise we have to refine our search, between the last known node and the one before it
 findbetween(nodes: array of string): (string, string)
 {
 	if(isknown(nodes[1]))
@@ -226,13 +230,10 @@ findbetween(nodes: array of string): (string, string)
 	if(isknown(nodes[2]))
 		return (nodes[1], nodes[1]);
 
-	for(i := 3; i < len nodes; i++)
+	for(i := len nodes-1-1; i >= 0; i--)
 		if(!isknown(nodes[i]))
 			break;
-	for(j := len nodes-1-1; j >= i; j--)
-		if(!isknown(nodes[j]))
-			break;
-	return (nodes[i-1], nodes[j+1]);
+	return (nodes[i], nodes[i+1]);
 }
 
 fmtnodelist(l: list of string): string

@@ -40,7 +40,7 @@ HgFs: module {
 
 dflag: int;
 
-Qroot, Qlastrev, Qfiles, Qchanges, Qlog, Qmanifest, Qtags, Qbranches, Qtgz, Qstate, Qwire, Qfilesrev, Qlogrev, Qmanifestrev, Qtgzrev: con iota;
+Qroot, Qlastrev, Qfiles, Qchanges, Qlog, Qmanifest, Qmanifestfull, Qtags, Qbranches, Qtgz, Qstate, Qwire, Qfilesrev, Qlogrev, Qmanifestrev, Qmanifestfullrev, Qtgzrev: con iota;
 tab := array[] of {
 	(Qroot,		"<reponame>",	Sys->DMDIR|8r555),
 	(Qlastrev,	"lastrev",	8r444),
@@ -48,6 +48,7 @@ tab := array[] of {
 	(Qchanges,	"changes",	Sys->DMDIR|8r555),
 	(Qlog,		"log",		Sys->DMDIR|8r555),
 	(Qmanifest,	"manifest",	Sys->DMDIR|8r555),
+	(Qmanifestfull,	"manifestfull",	Sys->DMDIR|8r555),
 	(Qtags,		"tags",		8r444),
 	(Qbranches,	"branches",	8r444),
 	(Qtgz,		"tgz",		Sys->DMDIR|8r555),
@@ -56,6 +57,7 @@ tab := array[] of {
 	(Qfilesrev,	"<filesrev>",	Sys->DMDIR|8r555),
 	(Qlogrev,	"<logrev>",	8r444),
 	(Qmanifestrev,	"<manifestrev>",	8r444),
+	(Qmanifestfullrev,	"<manifestfullrev>",	8r444),
 	(Qtgzrev,	"<tgzrev>",	8r444),
 };
 
@@ -66,7 +68,7 @@ tab := array[] of {
 # 24 bits revision (<<32)
 # when opening a revision, the file list in the revlog manifest is parsed,
 # and a full file tree (only path names) is created.  gens are assigned
-# incrementally, the root dir has gen 0.  Qtgz, Qlog, Qmanifest always have gen 0.
+# incrementally, the root dir has gen 0.  Qtgz, Qlog, Qmanifest, Qmanifestfull always have gen 0.
 # this ensures qids are permanent for a repository.
 
 Changefile: adt {
@@ -354,6 +356,14 @@ xdoread(m: ref Tmsg.Read)
 		}
 		srv.reply(styxservers->readbytes(m, f.data));
 
+	Qmanifestfullrev =>
+		if(m.offset == big 0 || f.data == nil) {
+			(rev, nil) := revgen(f.path);
+			(nil, mm) := repo.xmanifest(rev);
+			f.data = array of byte manifestfulltext(mm);
+		}
+		srv.reply(styxservers->readbytes(m, f.data));
+
 	Qtgzrev =>
 		tgz := tgztab.find(f.fid);
 		if(tgz == nil) {
@@ -499,6 +509,7 @@ navigate(navop: ref Navop)
 			case q {
 			Qlogrev =>	nq = Qlog;
 			Qmanifestrev =>	nq = Qmanifest;
+			Qmanifestfullrev =>	nq = Qmanifestfull;
 			Qtgzrev =>	nq = Qtgz;
 			* =>		nq = Qroot;
 			}
@@ -534,7 +545,8 @@ navigate(navop: ref Navop)
 			}
 
 		Qlog or
-		Qmanifest =>
+		Qmanifest or
+		Qmanifestfull =>
 			nrev: int;
 			{
 				nrev = parserev(op.name);
@@ -589,6 +601,7 @@ navigate(navop: ref Navop)
 		Qfiles or
 		Qlog or
 		Qmanifest or
+		Qmanifestfull or
 		Qtgz =>
 			# tip, branch tips, tags
 			{
@@ -621,7 +634,8 @@ navigate(navop: ref Navop)
 					case q {
 					Qfiles or
 					Qlog or
-					Qmanifest =>
+					Qmanifest or
+					Qmanifestfull =>
 						d.name = name;
 						if(typ == Tbranch)
 							d.name = d.name+"-tip";
@@ -774,6 +788,7 @@ child(q: int): big
 	Qfiles =>	return big Qfilesrev;
 	Qlog =>		return big Qlogrev;
 	Qmanifest =>	return big Qmanifestrev;
+	Qmanifestfull =>	return big Qmanifestfullrev;
 	Qtgz =>		return big Qtgzrev;
 	* =>	raise sprint("bogus call 'child' on q %d", q);
 	}
@@ -800,7 +815,7 @@ dir(path: big, mtime: int): ref Sys->Dir
 
 	d := ref sys->zerodir;
 	d.name = name;
-	if(q == Qlogrev || q == Qmanifestrev)
+	if(q == Qlogrev || q == Qmanifestrev || q == Qmanifestfullrev)
 		d.name = sprint("%d", rev);
 	if(q == Qtgzrev)
 		d.name = sprint("%s-%d.tgz", reponame, rev);
@@ -842,6 +857,14 @@ manifesttext(m: ref Manifest): string
 	s := "";
 	for(i := 0; i < len m.files; i++)
 		s += m.files[i].path+"\n";
+	return s;
+}
+
+manifestfulltext(m: ref Manifest): string
+{
+	s := "";
+	for(i := 0; i < len m.files; i++)
+		s += m.files[i].nodeid+" "+m.files[i].path+"\n";
 	return s;
 }
 

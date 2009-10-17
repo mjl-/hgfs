@@ -239,7 +239,8 @@ xentrylogtext(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int)
 			s += entrylogkey("parent", sprint("%d:%s", ents[e.p1].rev, ents[e.p1].nodeid[:12]));
 		if(e.p2 >= 0)
 			s += entrylogkey("parent", sprint("%d:%s", ents[e.p2].rev, ents[e.p2].nodeid[:12]));
-	}
+	} else if(e.p1 < 0 && e.rev != e.p1+1)
+		s += entrylogkey("parent", "-1:000000000000");
 	s += entrylogkey("user", ch.who);
 	s += entrylogkey("date", sprint("%s %+d", daytime->text(daytime->gmt(ch.when+ch.tzoff)), ch.tzoff));
 	if(verbose) {
@@ -920,12 +921,9 @@ Revlog.xdelta(rl: self ref Revlog, prev, rev: int): array of byte
 	#say(sprint("delta, prev %d, rev %d", prev, rev));
 	e := rl.xfind(rev);
 
-	if(prev != -1 && prev == e.rev-1 && e.base != e.rev) {
-		#say(sprint("matching delta, e %s", e.text()));
+	if(prev >= 0 && prev == e.rev-1 && e.base != e.rev)
 		return xgetdata(rl, e);
-	}
 
-	#say("creating new delta with full contents");
 	buf := xget(rl, e, 1);
 	obuflen := 0;
 	if(prev >= 0) {

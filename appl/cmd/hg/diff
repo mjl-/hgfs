@@ -1,0 +1,81 @@
+#!/dis/sh.dis
+
+load std string arg expr
+
+fn warn { echo $* >[1=2] }
+fn error { warn $*; raise error }
+fn usage { warn 'usage: hg/diff [-h repo] [-r rev rev] [path ...]'; raise usage }
+
+fn findworkdir {
+	pwd=`{pwd}
+	while {} {
+		if {test -d $pwd/.hg} { echo $pwd^/; exit 0 }
+		if {~ $pwd ''} {break}
+		
+		pwd=${index 0 ${splitstrr $pwd /}}
+		pwd=${slice 0 ${expr ${len $pwd} 1 -} $pwd}
+	}
+	exit 1
+}
+
+fn udiff {
+	(s0 p0 s1 p1)=$*
+	echo '#' $s0 $s1
+	diff $p0 $p1
+	echo
+}
+
+fn match {
+	f=${hd $*}
+	patterns=${tl $*}
+	r=nomatch
+	if {~ $#patterns 0} {r=''}
+	for pat in $patterns {
+		if {test $f '=' $pat} {r=''}
+		if {prefix $f/ $pat} {r=''}
+	}
+	status $r
+}
+
+revs=()
+args=$*
+(arg
+	r++	{revs=$arg}
+	'*'	{usage}
+	-	$args
+)
+
+workdir=`{findworkdir || error 'no workdir'}
+root=$workdir^.hg
+base=${slice ${len $workdir} end `{pwd}}
+fs=$root/fs
+mkdir $fs >[2]/dev/null
+if {! test -d $fs/files} {mount {hg/fs -h $root} $fs || error 'mount failed'}
+
+if {~ $#revs 0} {
+	rev=${slice 0 12 "{hg/identify -h $root}}
+	files=$fs/files/$rev
+	hg/status -h $root | getlines {
+	rescue 'nomatch' {raise continue} {
+		(opt file)=${splitstrl $line ' '}
+		file=${slice 1 end $file}
+		if {match $file $args} {
+			if {~ $opt R} {udiff $rev/$file $files/$file /dev/null /dev/null}
+			if {~ $opt A} {udiff /dev/null /dev/null $file $workdir/$file}
+			if {~ $opt M} {udiff $rev/$file $files/$file $file $workdir/$file}
+		}
+	}}
+} {
+	(r0 r1)=$revs
+	files=$fs/files
+	hg/manifestdiff $fs/manifestfull/$r0 $fs/manifestfull/$r1 | getlines {
+	rescue 'nomatch' {raise continue} {
+		(opt file)=${splitstrl $line ' '}
+		file=${slice 1 end $file}
+		if {match $file $args} {
+			if {~ $opt R} {udiff $r0/$file $files/$r0/$file /dev/null /dev/null}
+			if {~ $opt A} {udiff /dev/null /dev/null $r1/$file $files/$r1/$file}
+			if {~ $opt M} {udiff $r0/$file $files/$r0/$file $r1/$file $files/$r1/$file}
+		}
+	}}
+}

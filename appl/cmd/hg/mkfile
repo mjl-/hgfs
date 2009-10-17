@@ -18,6 +18,7 @@ TARG=\
 	revert.dis\
 	heads.dis\
 	commit.dis\
+	manifestdiff.dis\
 
 SYSMODULES=\
 	mercurial.m\

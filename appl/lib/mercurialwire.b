@@ -195,7 +195,7 @@ filldesc(cents, a: array of ref Entry, nodes: array of string)
 			continue;
 		}
 		ni := xfindnodeid(cents, nodes[i]);
-		say(sprint("mark root entry %d", ni));
+		if(dflag) say(sprint("mark root entry %d", ni));
 		a[ni] = cents[ni];
 	}
 
@@ -203,7 +203,7 @@ filldesc(cents, a: array of ref Entry, nodes: array of string)
 	for(i = 0; i < len cents; i++) {
 		e := cents[i];
 		if(havenull && e.p1 == -1 || (e.p1 >= 0 && a[e.p1] != nil) || (e.p2 >= 0 && a[e.p2] != nil)) {
-			say(sprint("mark entry %d", i));
+			if(dflag) say(sprint("mark entry %d", i));
 			a[i] = cents[i];
 		}
 	}
@@ -216,7 +216,7 @@ fillanc(cents, a: array of ref Entry, nodes: array of string)
 		if(nodes[i] == hg->nullnode)
 			continue;
 		ni = xfindnodeid(cents, nodes[i]);
-		say(sprint("mark head %d", ni));
+		if(dflag) say(sprint("mark head %d", ni));
 		fillanc0(cents, a, ni);
 	}
 }
@@ -262,7 +262,7 @@ changegroupsubset(r: ref Repo, sbases, sheads: string): (ref Sys->FD, string)
 		for(i := 0; i < len anc; i++)
 			if(desc[i] == nil || anc[i] == nil) {
 				desc[i] = nil;
-				say(sprint("unmarking %d", i));
+				if(dflag) say(sprint("unmarking %d", i));
 			}
 		return mkchangegroup(r, cl, ml, cents, ments, desc);
 	} exception e {
@@ -281,10 +281,12 @@ mkchangegroup(r: ref Repo, cl, ml: ref Revlog, cents, ments, sel: array of ref E
 
 mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, cents, ments, sel: array of ref Entry, out: ref Sys->FD)
 {
-	say("mkchangegroup, sending these ents:");
-	for(i := 0; i < len sel; i++)
-		if(sel[i] != nil)
-			say(sprint("\t%s", sel[i].text()));
+	if(dflag) {
+		say("mkchangegroup, sending these ents:");
+		for(i := 0; i < len sel; i++)
+			if(sel[i] != nil)
+				say(sprint("\t%s", sel[i].text()));
+	}
 
 	err: string;
 	(out, err) = filtertool->push(deflate, "z0", out, 1);
@@ -293,12 +295,12 @@ mkchangegroup0(r: ref Repo, cl, ml: ref Revlog, cents, ments, sel: array of ref 
 
 	# print the changelog group chunks
 	prev := -1;
-	for(i = 0; i < len sel; i++) {
+	for(i := 0; i < len sel; i++) {
 		e := sel[i];
 		if(e == nil)
 			continue;
 
-		say("nodeid: "+sel[i].nodeid);
+		if(dflag) say("nodeid: "+sel[i].nodeid);
 
 		hdr := array[4+4*20] of byte;
 		if(prev == -1)
@@ -386,11 +388,11 @@ filegroup(r: ref Repo, out: ref Sys->FD, p: ref Pathrevs, cents, sel: array of r
 		n := hd l;
 		i := xfindnodeid(fents, n);
 		e := fents[i];
-		say(sprint("\tnodeid %q, link %d, sel[link] nil %d", n, e.link, sel[e.link] == nil));
+		if(dflag) say(sprint("\tnodeid %q, link %d, sel[link] nil %d", n, e.link, sel[e.link] == nil));
 		if(sel[e.link] == nil)
 			continue;
 
-		say("adding file to filegroup");
+		if(dflag) say("adding file to filegroup");
 
 		if(wrote == 0) {
 			pathlen := array[4] of byte;
