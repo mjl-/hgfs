@@ -39,7 +39,7 @@ init()
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(1);
 }
 
 Remrepo.xnew(r: ref Repo, path: string): ref Remrepo
@@ -140,8 +140,6 @@ sshensure(r: ref Remrepo.Ssh)
 {
 	if(r.tossh == nil) {
 		(r.tossh, r.fromssh) = xrun(list of {"ssh", r.host, sprint("hg -R %s serve --stdio", r.dir)});
-		#(r.tossh, r.fromssh) = xrun(list of {"ssh", r.host, "echo blah"});
-		#(r.tossh, r.fromssh) = xrun(list of {"echo", "blah"});
 		r.b = bufio->fopen(r.fromssh, Bufio->OREAD);
 		if(r.b == nil)
 			error(sprint("fopen: %r"));
@@ -312,7 +310,7 @@ Remrepo.xbranches(rr: self ref Remrepo, nodes: list of string): list of ref (str
 
 Remrepo.xbetween(rr: self ref Remrepo, pairs: list of ref (string, string)): list of list of string
 {
-	if(len pairs)
+	if(pairs == nil)
 		error("no pairs specified");
 	pairtups: list of string;
 	for(l := pairs; l != nil; l = tl l) {

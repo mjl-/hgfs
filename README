@@ -39,14 +39,25 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- hg/diff: allow only a single revision on command-line too.  should be easy with a sort & uniq on output from hg/status & hg/manifestdiff combined.
-- hg/verify: verify that list of modified files in changelog entry matches with the files changed in the manifest.
-- hg/update: for local modifications (as returned by hg/status), only refuse to update if their state is actually different from that in new revision.  i.e. for "add", don't complain if new revision has that file and it has the same contents.  for "remove", don't complain if new revision has that file removed.  for "update", check if new revision has same data for file.
-- for dirstate, handle needmerge more like modified?  i.e. verify that it really changed, especially during commit.
+- hg/update: for local modifications (as returned by hg/status),
+  only refuse to update if their state is actually different from
+  that in new revision.  i.e. for "add", don't complain if new revision
+  has that file and it has the same contents.  for "remove", don't
+  complain if new revision has that file removed.  for "update", check
+  if new revision has same data for file.
+- for dirstate, handle needmerge more like modified?  i.e. verify
+  that it really changed, especially during commit.
 - for commit,update,etc, handle dirstate with p1 & p2 (merge).
+- hg/diff: allow only a single revision on command-line too.  should
+  be easy with a sort & uniq on output from hg/status & hg/manifestdiff
+  combined.
+- hg/verify: verify that list of modified files in changelog entry
+  matches with the files changed in the manifest.
 - read up on all the formats.  dirstate, undo.dirstate undo.branch
   (for rollback), journal.dirstate, journal.branch, wlock;  lock,
   journal, fncache, etc.;  http://mercurial.selenic.com/wiki/FileFormats
+- library: think about caching of revlogs per repo, caching of
+  entries in repo's and perhaps try reading less to become up to date.
 
 - cgi/websrv: test with various client versions
 

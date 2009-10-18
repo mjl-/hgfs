@@ -31,7 +31,7 @@ init(nil: ref Draw->Context, args: list of string)
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [-v] [-r rev] [file ...]");
@@ -55,32 +55,39 @@ init(nil: ref Draw->Context, args: list of string)
 init0(args: list of string)
 {
 	repo := Repo.xfind(hgpath);
+	base := repo.xworkdir();
 
-	rev := -1;
+	l := args;
+	args = nil;
+	for(; l != nil; l = tl l)
+		args = hg->xsanitize(base+"/"+hd l)::args;
+
 	if(revstr != nil) {
-		n: string;
-		(rev, n) = repo.xlookup(revstr, 1);
+		(rev, n) := repo.xlookup(revstr, 1);
+		if(!match(args, repo, rev))
+			return;
+		sys->print("%s\n", hg->xentrylogtext(repo, n, vflag));
+		return;
 	}
+
 	ents := repo.xchangelog().xentries();
-
 	for(i := len ents-1; i >= 0; i--) {
-		if(rev >= 0 && ents[i].rev != rev)
+		if(!match(args, repo, ents[i].rev))
 			continue;
-
-		if(args != nil && !filechanged(repo, ents[i], args))
-			continue;
-		sys->print("%s\n", hg->xentrylogtext(repo, ents, ents[i], vflag));
+		sys->print("%s\n", hg->xentrylogtext(repo, ents[i].nodeid, vflag));
 	}
 
 }
 
-filechanged(r: ref Repo, e: ref Entry, args: list of string): int
+match(l: list of string, r: ref Repo, rev: int): int
 {
-	c := r.xchange(e.rev);
-	for(l := args; l != nil; l = tl l)
-		for(ll := c.files; ll != nil; ll = tl ll)
-			if(hd ll == hd l)
-				return 1;
+	if(l == nil)
+		return 1;
+
+	c := r.xchange(rev);
+	for(; l != nil; l = tl l)
+		if(c.hasfile(hd l))
+			return 1;
 	return 0;
 }
 

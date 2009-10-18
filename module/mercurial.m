@@ -1,9 +1,10 @@
 Mercurial: module
 {
 	PATH:	con "/dis/lib/mercurial.dis";
-	init:	fn();
+	init:	fn(readonly: int);
 
 	debug:	int;
+	readonly:	int;
 	nullnode:	con "0000000000000000000000000000000000000000";
 
 	checknodeid:	fn(n: string): string;
@@ -18,7 +19,7 @@ Mercurial: module
 	ensuredirs:	fn(root, path: string);
 	xreaduser:	fn(r: ref Repo): string;
 	xreadconfigs:	fn(r: ref Repo): ref Configs;
-	xentrylogtext:	fn(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int): string;
+	xentrylogtext:	fn(r: ref Repo, n: string, verbose: int): string;
 	xopencreate:	fn(f: string, mode, perm: int): ref Sys->FD;
 	xbopencreate:	fn(f: string, mode, perm: int): ref Bufio->Iobuf;
 	xdirstate:	fn(r: ref Repo, all: int): ref Dirstate;
@@ -40,6 +41,8 @@ Mercurial: module
 
 		xparse:		fn(data: array of byte, e: ref Entry): ref Change;
 		findextra:	fn(c: self ref Change, k: string): (string, string);
+		hasfile:	fn(c: self ref Change, f: string): int;
+		findfiles:	fn(c: self ref Change, f: string): list of string;
 		text:	fn(c: self ref Change): string;
 	};
 
@@ -200,6 +203,7 @@ Mercurial: module
 		xmanifest:	fn(r: self ref Repo, n: string): ref Manifest;
 		xlastrev:	fn(r: self ref Repo): int;
 		xchange:	fn(r: self ref Repo, rev: int): ref Change;
+		xchangen:	fn(r: self ref Repo, n: string): ref Change;
 		xmtime:		fn(r: self ref Repo, rl: ref Revlog, rev: int): int;
 		xwritedirstate:	fn(r: self ref Repo, ds: ref Dirstate);
 		xworkdir:	fn(r: self ref Repo): string;
@@ -208,7 +212,7 @@ Mercurial: module
 		xbranches:	fn(r: self ref Repo): list of ref Branch;
 		xworkbranch:	fn(r: self ref Repo): string;
 		xwriteworkbranch:	fn(r: self ref Repo, b: string);
-		xheads:		fn(r: self ref Repo): array of ref Entry;
+		xheads:		fn(r: self ref Repo): list of string;
 		xchangelog:	fn(r: self ref Repo): ref Revlog;
 		xmanifestlog:	fn(r: self ref Repo): ref Revlog;
 		xlookup:	fn(r: self ref Repo, rev: string, need: int): (int, string);

@@ -37,7 +37,7 @@ init(nil: ref Draw->Context, args: list of string)
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [-C] [rev]");
@@ -112,6 +112,7 @@ init0(revstr: string)
 		}
 	}
 
+	nupdated := nmerged := nremoved := nunresolved := 0;
 	nds := ref Dirstate (1, nodeid, hg->nullnode, nil, nil);
 	oi := ni := 0;
 	for(;;) {
@@ -127,6 +128,7 @@ init0(revstr: string)
 			if(ofiles[oi].nodeid != nfiles[ni].nodeid || hg->differs(repo, nfiles[ni])) {
 				say(sprint("updating %q", np));
 				ewritefile(np, nfiles[ni].nodeid);
+				nupdated++;
 			}
 			dsadd(nds, np);
 			oi++;
@@ -135,12 +137,14 @@ init0(revstr: string)
 			say(sprint("removing %q", op));
 			sys->remove(op);
 			removedirs(nfiles, op);
+			nremoved++;
 			oi++;
 		} else if(np < op || op == nil) {
 			say(sprint("creating %q", np));
 			ewritefile(np, nfiles[ni].nodeid);
 			dsadd(nds, np);
 			ni++;
+			nupdated++;
 		}
 	}
 
@@ -148,6 +152,8 @@ init0(revstr: string)
 	repo.xwritedirstate(nds);
 	if(obranch != nbranch || nbranch != wbranch)
 		repo.xwriteworkbranch(nbranch);
+
+	warn(sprint("files: %d updated, %d merged, %d removed, %d unresolved", nupdated, nmerged, nremoved, nunresolved));
 }
 
 removedirs(mf: array of ref Mfile, p: string)

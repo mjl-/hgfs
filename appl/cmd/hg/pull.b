@@ -57,7 +57,7 @@ init(nil: ref Draw->Context, args: list of string)
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(0);
 	hgrem = load Mercurialremote Mercurialremote->PATH;
 	hgrem->init();
 

@@ -56,7 +56,7 @@ init(nil: ref Draw->Context, args: list of string)
 	deflate->init();
 	filtertool = load Filtertool Filtertool->PATH;
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [-v] [-m msg] [path ...]");
@@ -192,11 +192,15 @@ init0(args: list of string)
 	say(cmsg);
 	cbuf := array of byte cmsg;
 	cnodeid := hg->xcreatenodeid(cbuf, ds.p1, ds.p2);
+	nheads := len repo.xheads();
 	ce := cl.xappend(repo, tr, cnodeid, ds.p1, ds.p2, link, cbuf);
+	nnheads := len repo.xheads()-nheads;
 
 	nds.p1 = ce.nodeid;
 	repo.xwritedirstate(nds);
 	repo.xcommit(tr);
+	if(nnheads != 0)
+		warn("created new head");
 }
 
 inspect(r, l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], path: string): list of ref Dsfile

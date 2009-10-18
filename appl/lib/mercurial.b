@@ -31,7 +31,7 @@ include "mercurial.m";
 
 Cachemax:	con 64;  # max number of cached items in a revlog
 
-init()
+init(rdonly: int)
 {
 	sys = load Sys Sys->PATH;
 	bufio = load Bufio Bufio->PATH;
@@ -48,6 +48,8 @@ init()
 	filtertool = load Filtertool Filtertool->PATH;
 	util = load Util0 Util0->PATH;
 	util->init();
+
+	readonly = rdonly;
 }
 
 checknodeid(n: string): string
@@ -180,6 +182,9 @@ xsanitize(s: string): string
 ensuredirs(base, path: string)
 {
 	s := base;
+	(ok, dir) := sys->stat(base+"/"+str->splitstrr(path, "/").t0);
+	if(ok == 0 && (dir.mode & Sys->DMDIR))
+		return;
 	for(l := sys->tokenize(str->splitstrr(path, "/").t0, "/").t1; l != nil; l = tl l) {
 		s += "/"+hd l;
 		if(sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR) == nil)
@@ -227,22 +232,31 @@ xreadconfigs(r: ref Repo): ref Configs
 }
 
 
-xentrylogtext(r: ref Repo, ents: array of ref Entry, e: ref Entry, verbose: int): string
+xentrylogtext(r: ref Repo, n: string, verbose: int): string
 {
-	ch := r.xchange(e.rev);
+	cl := r.xchangelog();
+	ents := cl.xentries();
+	rev := p1 := p2 := -1;
+	if(n != nullnode) {
+		e := cl.xfindnodeid(n, 1);
+		rev = e.rev;
+		p1 = e.p1;
+		p2 = e.p2;
+	}
+	ch := r.xchangen(n);
 	s := "";
-	s += entrylogkey("changeset", sprint("%d:%s", e.rev, e.nodeid[:12]));
+	s += entrylogkey("changeset", sprint("%d:%s", rev, n[:12]));
 	(k, branch) := ch.findextra("branch");
 	if(k != nil)
 		s += entrylogkey("branch", branch);
-	for(tags := r.xrevtags(e.nodeid); tags != nil; tags = tl tags)
+	for(tags := r.xrevtags(n); tags != nil; tags = tl tags)
 		s += entrylogkey("tag", (hd tags).name);
-	if((e.p1 >= 0 && e.p1 != e.rev-1) || (e.p2 >= 0 && e.p2 != e.rev-1)) {
-		if(e.p1 >= 0)
-			s += entrylogkey("parent", sprint("%d:%s", ents[e.p1].rev, ents[e.p1].nodeid[:12]));
-		if(e.p2 >= 0)
-			s += entrylogkey("parent", sprint("%d:%s", ents[e.p2].rev, ents[e.p2].nodeid[:12]));
-	} else if(e.p1 < 0 && e.rev != e.p1+1)
+	if((p1 >= 0 && p1 != rev-1) || (p2 >= 0 && p2 != rev-1)) {
+		if(p1 >= 0)
+			s += entrylogkey("parent", sprint("%d:%s", ents[p1].rev, ents[p1].nodeid[:12]));
+		if(p2 >= 0)
+			s += entrylogkey("parent", sprint("%d:%s", ents[p2].rev, ents[p2].nodeid[:12]));
+	} else if(p1 < 0 && rev != p1+1 && rev >= 0)
 		s += entrylogkey("parent", "-1:000000000000");
 	s += entrylogkey("user", ch.who);
 	s += entrylogkey("date", sprint("%s %+d", daytime->text(daytime->gmt(ch.when+ch.tzoff)), ch.tzoff));
@@ -525,6 +539,27 @@ Change.findextra(c: self ref Change, k: string): (string, string)
 	return (nil, nil);
 }
 
+Change.hasfile(c: self ref Change, f: string): int
+{
+	dir := f+"/";
+	r: list of string;
+	for(l := c.files; l != nil; l = tl l)
+		if(hd l == f || prefix(dir, hd l))
+			return 1;
+	return 0;
+}
+
+Change.findfiles(c: self ref Change, f: string): list of string
+{
+	dir := f+"/";
+	r: list of string;
+	for(l := c.files; l != nil; l = tl l)
+		if(hd l == f || prefix(dir, hd l))
+			r = hd l::r;
+	return rev(r);
+}
+
+
 Change.text(c: self ref Change): string
 {
 	s := "";
@@ -657,7 +692,7 @@ xreopen(rl: ref Revlog)
 	if(dir.length == rl.ilength && dir.mtime == rl.imtime && dir.qid.vers == rl.ivers)
 		return;
 
-say(sprint("revlog, reopen, path %q", rl.path));
+say(sprint("xreopen, path %q, is dirty, going to read", rl.path));
 
 	# reread the index file.  we also get here for the first open of the revlog.
 	# instead of rereading everything, we could continue at where we left.
@@ -685,7 +720,7 @@ say(sprint("revlog, reopen, path %q", rl.path));
 	xreadrevlog(rl, ib);
 	rl.ilength = dir.length;
 	rl.imtime = dir.mtime;
-	rl.imtime = dir.qid.vers;
+	rl.ivers = dir.qid.vers;
 }
 
 # read through the entire revlog, store all entries in rl.entries.
@@ -817,7 +852,7 @@ xgetdata(rl: ref Revlog, e: ref Entry): array of byte
 	#say(sprint("getdata, getting fresh data for rev %d", e.rev));
 	if(rl.bd == nil) {
 		fd := rl.dfd;
-		if(rl.isindexonly())
+		if(isindexonly(rl))
 			fd = rl.ifd;
 		rl.bd = bufio->fopen(fd, Bufio->OREAD);
 	}
@@ -1062,7 +1097,9 @@ xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
 {
 	warn("adding changesets");
 	cl := r.xchangelog();
+	nheads := len r.xheads();
 	nchangesets := cl.xstream(r, tr, b, 1, cl);
+	nnheads := len r.xheads()-nheads;
 
 	warn("adding manifests");
 	ml := r.xmanifestlog();
@@ -1083,11 +1120,22 @@ xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
 		nfiles++;
 	}
 
-	warn(sprint("added %d changesets with %d changes to %d files", nchangesets, nchanges, nfiles));
+	msg := sprint("added %d changesets with %d changes to %d files", nchangesets, nchanges, nfiles);
+	if(nnheads != 0) {
+		if(nnheads > 0)
+			s := "+"+string nnheads;
+		else
+			s = string nnheads;
+		msg += sprint(", %s heads", s);
+	}
+	warn(msg);
 }
 
 Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf: array of byte): ref Entry
 {
+	if(readonly)
+		error("repository opened readonly");
+
 	xreopen(rl);
 
 	p1rev := p2rev := -1;
@@ -1107,7 +1155,7 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 		nrev = orev+1;
 		ee := rl.ents[orev];
 		offset = ee.offset+big ee.csize;
-		if(rl.isindexonly()) {
+		if(isindexonly(rl)) {
 			isize = ee.ioffset+big ee.csize;
 		} else {
 			isize = big (len rl.ents*Entrysize);
@@ -1141,7 +1189,7 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 	(base, buf) = rl.xstorebuf(buf, nrev);
 
 	# if we grow a .i-only revlog to beyond 128k, create a .d and rewrite the .i
-	if(rl.isindexonly() && isize+big Entrysize+big len buf >= big (128*1024)) {
+	if(isindexonly(rl) && isize+big Entrysize+big len buf >= big (128*1024)) {
 		say(sprint("no longer indexonly, writing %q", dpath));
 
 		ifd := xopen(ipath, Sys->OREAD);
@@ -1198,14 +1246,14 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 	}
 
 	ioffset := big 0;
-	if(rl.isindexonly())
+	if(isindexonly(rl))
 		ioffset = isize+big Entrysize;
 
 	flags := 0;
 	e := ref Entry (nrev, offset, ioffset, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
 say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	ebuf := array[Entrysize] of byte;
-	e.xpack(ebuf, rl.isindexonly());
+	e.xpack(ebuf, isindexonly(rl));
 	nents := array[len rl.ents+1] of ref Entry;
 	nents[:] = rl.ents;
 	nents[len rl.ents] = e;
@@ -1217,7 +1265,7 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	if(sys->pwrite(ifd, ebuf, len ebuf, isize) != len ebuf)
 		error(sprint("write %q: %r", ipath));
 	isize += big Entrysize;
-	if(rl.isindexonly()) {
+	if(isindexonly(rl)) {
 		if(sys->pwrite(ifd, buf, len buf, isize) != len buf)
 			error(sprint("write %q: %r", ipath));
 	} else {
@@ -1227,6 +1275,14 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 		if(sys->pwrite(dfd, buf, len buf, dsize) != len buf)
 			error(sprint("write %q: %r", dpath));
 	}
+
+	(ok, dir) := sys->fstat(ifd);
+	if(ok == 0) {
+		rl.ilength = dir.length;
+		rl.imtime = dir.mtime;
+		rl.ivers = dir.qid.vers;
+	}
+
 	return e;
 }
 
@@ -1276,7 +1332,7 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 			error(sprint("nodeid mismatch, expected %s saw %s", rev, nodeid));
 
 		if(rl.xfindnodeid(nodeid, 0) != nil)
-			error(sprint("already have nodeid %s", nodeid));
+			continue;
 
 		rl.xappend(r, tr, nodeid, p1, p2, linkrev, buf);
 		nchanges++;
@@ -1458,6 +1514,16 @@ Repo.xchange(r: self ref Repo, rev: int): ref Change
 	return Change.xparse(cd, ce);
 }
 
+Repo.xchangen(r: self ref Repo, n: string): ref Change
+{
+	if(n == nullnode)
+		return ref Change (-1, n, -1, -1, nullnode, "", 0, 0, nil, nil, nil);
+	cl := r.xchangelog();
+	ce := cl.xfindnodeid(n, 1);
+	cd := cl.xget(ce.rev);
+	return Change.xparse(cd, ce);
+}
+
 Repo.xmtime(r: self ref Repo, rl: ref Revlog, rev: int): int
 {
 	e := rl.xfind(rev);
@@ -1590,6 +1656,9 @@ Dirstate.haschanges(ds: self ref Dirstate): int
 
 Repo.xwritedirstate(r: self ref Repo, ds: ref Dirstate)
 {
+	if(readonly)
+		error("repository opened readonly");
+
 	n := ds.packedsize();
 	ds.pack(buf := array[n] of byte);
 	path := r.path+"/dirstate";
@@ -1640,16 +1709,15 @@ Repo.xtags(r: self ref Repo): list of ref Tag
 {
 	tags: list of ref Tag;
 	tagtab := Strhash[ref Tag].new(31, nil);
-	heads := r.xheads();
-	for(i := len heads-1; i >= 0; i--) {
-		e := heads[i];
-		(nil, m) := r.xrevision(e.rev);
+	for(l := r.xheads(); l != nil; l = tl l) {
+		n := hd l;
+		m := r.xmanifest(n);
 		mf := m.find(".hgtags");
 		if(mf == nil)
 			continue;
 		buf := r.xget(mf.nodeid, ".hgtags");
-		for(l := xparsetags(r, string buf); l != nil; l = tl l) {
-			t := hd l;
+		for(ll := xparsetags(r, string buf); ll != nil; ll = tl ll) {
+			t := hd ll;
 			if(tagtab.find(t.name) == nil) {
 				tags = t::tags;
 				tagtab.add(t.name, t);
@@ -1691,7 +1759,7 @@ Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 				tags = t::tags;
 		}
 	}
-	if(len ents > 0 && ents[len ents-1].rev == rev)
+	if(len ents == 0 || len ents > 0 && ents[len ents-1].rev == rev)
 		tags = ref Tag ("tip", n, rev)::tags;
 	return tags;
 }
@@ -1795,10 +1863,13 @@ say("repo.branches");
 	return util->rev(l);
 }
 
-Repo.xheads(r: self ref Repo): array of ref Entry
+Repo.xheads(r: self ref Repo): list of string
 {
 	cl := r.xchangelog();
 	a := cl.xentries();
+
+	if(len a == 0)
+		return nullnode::nil;
 
 	for(i := 0; i < len a; i++) {
 		e := a[i];
@@ -1808,11 +1879,11 @@ Repo.xheads(r: self ref Repo): array of ref Entry
 			a[e.p2] = nil;
 	}
 
-	hl: list of ref Entry;
+	l: list of string;
 	for(i = 0; i < len a; i++)
 		if(a[i] != nil)
-			hl = a[i]::hl;
-	return l2a(util->rev(hl));
+			l = a[i].nodeid::l;
+	return l;
 }
 
 Repo.xchangelog(r: self ref Repo): ref Revlog
@@ -1839,7 +1910,7 @@ Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 
 	if(s == "tip" || s == ".") {
 		if(len ents == 0)
-			return (-1, "null");  # should this raise error if need is set?
+			return (-1, "null");
 		e := ents[len ents-1];
 		return (e.rev, e.nodeid);
 	}
@@ -1944,7 +2015,6 @@ Repo.xensuredirs(r: self ref Repo, fullrlpath: string)
 		error(sprint("revlog path %#q not in store path %#q", fullrlpath, pre));
 	fullrlpath = "./"+str->drop(fullrlpath[len pre:], "/");
 	ensuredirs(pre, fullrlpath);
-
 }
 
 find(a: array of string, e: string): int
@@ -2436,6 +2506,9 @@ xreadconfig(path: string): ref Config
 
 Repo.xtransact(r: self ref Repo): ref Transact
 {
+	if(readonly)
+		error("repository opened readonly");
+
 	f := r.storedir()+"/undo";
 	tr := ref Transact;
 	tr.fd = xcreate(f, Sys->OWRITE|Sys->OTRUNC, 8r666);

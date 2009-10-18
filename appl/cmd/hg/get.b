@@ -29,7 +29,7 @@ init(nil: ref Draw->Context, args: list of string)
 	arg := load Arg Arg->PATH;
 	str = load String String->PATH;
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [-v] [-r rev]");

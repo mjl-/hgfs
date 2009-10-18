@@ -31,7 +31,7 @@ init(nil: ref Draw->Context, args: list of string)
 	daytime = load Daytime Daytime->PATH;
 	str = load String String->PATH;
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [-v]");
@@ -56,11 +56,8 @@ init(nil: ref Draw->Context, args: list of string)
 init0()
 {
 	repo := Repo.xfind(hgpath);
-	ents := repo.xchangelog().xentries();
-	heads := repo.xheads();
-
-	for(i := len heads-1; i >= 0; i--)
-		sys->print("%s\n", hg->xentrylogtext(repo, ents, heads[i], vflag));
+	for(l := repo.xheads(); l != nil; l = tl l)
+		sys->print("%s\n", hg->xentrylogtext(repo, hd l, vflag));
 }
 
 fail(s: string)

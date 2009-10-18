@@ -120,7 +120,7 @@ init(nil: ref Draw->Context, args: list of string)
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(1);
 	hgwire = load Mercurialwire Mercurialwire->PATH;
 	hgwire->init();
 

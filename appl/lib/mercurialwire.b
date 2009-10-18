@@ -17,7 +17,7 @@ include "filtertool.m";
 	filtertool: Filtertool;
 include "util0.m";
 	util: Util0;
-	l2a, rev: import util;
+	join, l2a, rev: import util;
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change, Manifest: import hg;
@@ -35,20 +35,13 @@ init()
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init();
+	hg->init(1);
 }
 
 heads(r: ref Repo): (string, string)
 {
 	{
-		ents := r.xheads();
-
-		s := "";
-		for(i := 0; i < len ents; i++)
-			s += " "+ents[i].nodeid;
-		if(s != nil)
-			s = s[1:];
-		return (s+"\n", nil);
+		return (join(r.xheads(), " ")+"\n", nil);
 	} exception e {
 	"hg:*" =>	return (nil, e[len "hg:":]);
 	}
