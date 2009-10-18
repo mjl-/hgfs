@@ -23,6 +23,7 @@ Mercurial: module
 	xbopencreate:	fn(f: string, mode, perm: int): ref Bufio->Iobuf;
 	xdirstate:	fn(r: ref Repo, all: int): ref Dirstate;
 	xparsetags:	fn(r: ref Repo, s: string): list of ref Tag;
+	xstreamin:	fn(r: ref Repo, b: ref Bufio->Iobuf);
 
 	Entrysize:	con 64;
 
@@ -171,9 +172,8 @@ Mercurial: module
 
 		xentries:	fn(rl: self ref Revlog): array of ref Entry;
 		isindexonly:	fn(rl: self ref Revlog): int;
-		xappend:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: string, link: int, buf: array of byte): ref Entry;
-
-		#xstream;	fn(rl: ref Revlog, tr: ref Transact, cg: ref Bufio->Iobuf, ischlog: int, cl: ref Revlog): int;
+		xappend:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf: array of byte): ref Entry;
+		xstream:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio->Iobuf, ischlog: int, cl: ref Revlog): int;
 	};
 
 	Repo: adt {

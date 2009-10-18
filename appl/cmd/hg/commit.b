@@ -152,16 +152,20 @@ init0(args: list of string)
 		if(ok != 0)
 			error(sprint("stat %q: %r", f));
 
-		rl := repo.xopenrevlog(path);
-
 		fp1 := fp2 := hg->nullnode;
 		if((mf1 := m1.find(path)) != nil)
 			fp1 = mf1.nodeid;
 		if((mf2 := m2.find(path)) != nil)
 			fp2 = mf2.nodeid;
 
+		rl := repo.xopenrevlog(path);
+
+		nodeid := hg->xcreatenodeid(buf, fp1, fp2);
+		if(rl.xfindnodeid(nodeid, 0) != nil)
+			continue;
+
 		say(sprint("adding to revlog for file %#q, fp1 %s, fp2 %s", path, fp1, fp2));
-		ne := rl.xappend(repo, tr, fp1, fp2, link, buf);
+		ne := rl.xappend(repo, tr, nodeid, fp1, fp2, link, buf);
 		filenodeids[i] = ne.nodeid;
 		say(sprint("file now at nodeid %s", ne.nodeid));
 
@@ -177,14 +181,18 @@ init0(args: list of string)
 	say("adding to manifest");
 	ml := repo.xmanifestlog();
 	mbuf := m.xpack();
-	me := ml.xappend(repo, tr, m1.nodeid, m2.nodeid, link, mbuf);
+	mnodeid := hg->xcreatenodeid(mbuf, m1.nodeid, m2.nodeid);
+	if(ml.xfindnodeid(mnodeid, 0) == nil)
+		ml.xappend(repo, tr, mnodeid, m1.nodeid, m2.nodeid, link, mbuf);
 
 	say("adding to changelog");
 	cl := repo.xchangelog();
-	cmsg := sprint("%s\n%s\n%d %d\n%s\n\n%s", me.nodeid, user, now, tzoff, join(rev(modfiles), "\n"), msg);
+	cmsg := sprint("%s\n%s\n%d %d\n%s\n\n%s", mnodeid, user, now, tzoff, join(rev(modfiles), "\n"), msg);
 	say(sprint("change message:"));
 	say(cmsg);
-	ce := cl.xappend(repo, tr, ds.p1, ds.p2, link, array of byte cmsg);
+	cbuf := array of byte cmsg;
+	cnodeid := hg->xcreatenodeid(cbuf, ds.p1, ds.p2);
+	ce := cl.xappend(repo, tr, cnodeid, ds.p1, ds.p2, link, cbuf);
 
 	nds.p1 = ce.nodeid;
 	repo.xwritedirstate(nds);

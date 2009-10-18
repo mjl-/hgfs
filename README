@@ -47,7 +47,6 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - read up on all the formats.  dirstate, undo.dirstate undo.branch
   (for rollback), journal.dirstate, journal.branch, wlock;  lock,
   journal, fncache, etc.;  http://mercurial.selenic.com/wiki/FileFormats
-- hg/commit: split into .d files at 128k size of .i
 
 - cgi/websrv: test with various client versions
 

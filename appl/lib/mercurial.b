@@ -25,7 +25,7 @@ include "tables.m";
 	Strhash: import tables;
 include "util0.m";
 	util: Util0;
-	eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
+	g32i, eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
 include "mercurial.m";
 
 
@@ -1045,21 +1045,62 @@ Revlog.xpread(rl: self ref Revlog, rev: int, n: int, off: big): array of byte
 	return d;
 }
 
-Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: string, link: int, buf: array of byte): ref Entry
+xstreamin(r: ref Repo, b: ref Iobuf)
+{
+	tr := r.xtransact();
+	{
+		xstreamin0(r, tr, b);
+		r.xcommit(tr);
+	} exception {
+	"hg:*" =>
+		r.xrollback(tr);
+		raise;
+	}
+}
+
+xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
+{
+	warn("adding changesets");
+	cl := r.xchangelog();
+	nchangesets := cl.xstream(r, tr, b, 1, cl);
+
+	warn("adding manifests");
+	ml := r.xmanifestlog();
+	ml.xstream(r, tr, b, 0, cl);
+	
+	warn("adding file changes");
+	nfiles := 0;
+	nchanges := 0;
+	for(;;) {
+		i := bg32(b);
+		if(i == 0)
+			break;
+
+		namebuf := breadn0(b, i-4);
+		name := string namebuf;
+		rl := r.xopenrevlog(name);
+		nchanges += rl.xstream(r, tr, b, 0, cl);
+		nfiles++;
+	}
+
+	case b.getc() {
+	Bufio->EOF =>	;
+	Bufio->ERROR =>	error(sprint("error reading end of changegroup: %r"));
+	* =>		error(sprint("data past end of changegroup..."));
+	}
+
+	warn(sprint("added %d changesets with %d changes to %d files", nchangesets, nchanges, nfiles));
+}
+
+Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf: array of byte): ref Entry
 {
 	xreopen(rl);
 
 	p1rev := p2rev := -1;
-	if(p1 != nullnode) {
+	if(p1 != nullnode)
 		p1rev = rl.xfindnodeid(p1, 1).rev;
-		if(p2 != nullnode)
-			p2rev = rl.xfindnodeid(p2, 1).rev;
-	}
-	nodeid := xcreatenodeid(buf, p1, p2);
-
-	e := rl.xfindnodeid(nodeid, 0);
-	if(e != nil)
-		return e;
+	if(p2 != nullnode)
+		p2rev = rl.xfindnodeid(p2, 1).rev;
 
 	ipath := rl.path+".i";
 	dpath := rl.path+".d";
@@ -1079,6 +1120,8 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: strin
 			dsize = ee.offset+big ee.csize;
 		}
 	}
+	if(link < 0)
+		link = nrev;
 
 	if(!tr.has(ipath))
 		tr.add(rl.rlpath+".i", isize);
@@ -1104,8 +1147,7 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: strin
 	(base, buf) = rl.xstorebuf(buf, nrev);
 
 	# if we grow a .i-only revlog to beyond 128k, create a .d and rewrite the .i
-	isindexonly := rl.isindexonly();
-	if(isindexonly && isize+big Entrysize+big len buf >= big (128*1024)) {
+	if(rl.isindexonly() && isize+big Entrysize+big len buf >= big (128*1024)) {
 		say(sprint("no longer indexonly, writing %q", dpath));
 
 		ifd := xopen(ipath, Sys->OREAD);
@@ -1125,7 +1167,7 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: strin
 		isize = big 0;
 		dsize = big 0;
 		for(i := 0; i < len rl.ents; i++) {
-			e = rl.ents[i];
+			e := rl.ents[i];
 
 			if(i == 0)
 				p16(ibuf, 0, 0); # clear the Indexonly bits
@@ -1153,21 +1195,23 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: strin
 		if(sys->remove(ipath) != 0 || sys->fwstat(nifd, ndir) != 0)
 			error(sprint("remove %q and rename of %q failed: %r", ipath, nipath));
 
-		isindexonly = 0;
+		rl.flags &= ~Indexonly;
+		rl.ifd = rl.dfd = nil;
+		rl.bd = nil;
 
 		tr.add(rl.rlpath+".d", dsize);
 		tr.add(rl.rlpath+".i", isize);
 	}
 
 	ioffset := big 0;
-	if(isindexonly)
+	if(rl.isindexonly())
 		ioffset = isize+big Entrysize;
 
 	flags := 0;
-	e = ref Entry (nrev, offset, ioffset, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
+	e := ref Entry (nrev, offset, ioffset, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
 say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	ebuf := array[Entrysize] of byte;
-	e.xpack(ebuf, isindexonly);
+	e.xpack(ebuf, rl.isindexonly());
 	nents := array[len rl.ents+1] of ref Entry;
 	nents[:] = rl.ents;
 	nents[len rl.ents] = e;
@@ -1179,7 +1223,7 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	if(sys->pwrite(ifd, ebuf, len ebuf, isize) != len ebuf)
 		error(sprint("write %q: %r", ipath));
 	isize += big Entrysize;
-	if(isindexonly) {
+	if(rl.isindexonly()) {
 		if(sys->pwrite(ifd, buf, len buf, isize) != len buf)
 			error(sprint("write %q: %r", ipath));
 	} else {
@@ -1190,6 +1234,60 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 			error(sprint("write %q: %r", dpath));
 	}
 	return e;
+}
+
+Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio->Iobuf, ischlog: int, cl: ref Revlog): int
+{
+	buf: array of byte;
+	nchanges := 0;
+	for(;;) {
+		i := bg32(b);
+		if(i == 0)
+			break;
+
+		(rev, p1, p2, link, delta) := breadchunk(b, i);
+		say(sprint("\trev=%s", rev));
+		say(sprint("\tp1=%s", p1));
+		say(sprint("\tp2=%s", p2));
+		say(sprint("\tlink=%s", link));
+		say(sprint("\tlen delta=%d", len delta));
+
+		if(ischlog && rev != link)
+			error(sprint("changelog entry %s with bogus link %s", rev, link));
+		if(!ischlog && cl.xfindnodeid(link, 0) == nil)
+			error(sprint("nodeid %s references unknown changelog link %s", rev, link));
+
+		p := Patch.xparse(delta);
+		say(sprint("\tpatch, sizediff %d", p.sizediff()));
+		say(sprint("\t%s", p.text()));
+		
+		linkrev := -1;
+		if(!ischlog)
+			linkrev = cl.xfindnodeid(link, 1).rev;
+
+		if(buf == nil) {
+			if(p1 != nullnode) {
+				buf = rl.xgetnodeid(p1);
+			} else {
+				if(len p.l != 1 || (c := hd p.l).start != 0 || c.end != 0)
+					error(sprint("first chunk is not full version"));
+				buf = array[0] of byte;
+			}
+		}
+
+		buf = p.apply(buf);
+
+		nodeid := xcreatenodeid(buf, p1, p2);
+		if(nodeid != rev)
+			error(sprint("nodeid mismatch, expected %s saw %s", rev, nodeid));
+
+		if(rl.xfindnodeid(nodeid, 0) != nil)
+			error(sprint("already have nodeid %s", nodeid));
+
+		rl.xappend(r, tr, nodeid, p1, p2, linkrev, buf);
+		nchanges++;
+	}
+	return nchanges;
 }
 
 xreadlines(b: ref Iobuf): list of string
@@ -2429,6 +2527,41 @@ Configs.find(c: self ref Configs, sec, name: string): (int, string)
 			return (h, v);
 	}
 	return (0, nil);
+}
+
+
+breadn0(b: ref Iobuf, n: int): array of byte
+{
+	nn := breadn(b, d := array[n] of byte, n);
+	if(nn < 0)
+		error(sprint("reading: %r"));
+	if(nn != n)
+		error("short read");
+	return d;
+}
+
+bg32(b: ref Iobuf): int
+{
+	return g32i(breadn0(b, 4), 0).t0;
+}
+
+breadchunk(b: ref Iobuf, n: int): (string, string, string, string, array of byte)
+{
+	n -= 4;
+	if(n < 4*20)
+		error("short chunk");
+	buf := breadn0(b, n);
+	o := 0;
+	rev := buf[o:o+20];
+	o += 20;
+	p1 := buf[o:o+20];
+	o += 20;
+	p2 := buf[o:o+20];
+	o += 20;
+	link := buf[o:o+20];
+	o += 20;
+	delta := buf[o:];
+	return (hex(rev), hex(p1), hex(p2), hex(link), delta);
 }
 
 xreadfile(p: string): array of byte
