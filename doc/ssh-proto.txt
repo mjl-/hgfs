@@ -1,0 +1,29 @@
+the ssh wire protocol.
+
+this is actually what the http wire protocol seems to be based
+around, and seems more generally useful:  any file descriptor that
+talks this protocol can be used for push/pull.  perhaps the hgfs
+wire file should be taught to talk it.
+
+the command are described in http-proto.txt.  they do the same,
+just their request/response format has to be specified.
+the format of a request is:
+
+	<command>\n<args>
+
+note: no newline after args!  args are the arguments for the command.
+all those defined for a command must be present (unlike in the http
+variant!).  "args" is the concatenation of each "arg".
+an "arg" is:
+
+	<name> <length>\n<length bytes for value>
+
+note that there is no newline after the value, between the name and
+length of the value is a space.
+
+as with http, some responses have newlines in them, some do not.
+
+ssh does not have a capababilities command.  instead, it has a
+"hello" command.  it returns a line (with newline!) starting with
+"capababilities: " and followed by what seems to be a normal
+"capabilities" response, but with a newline appened.

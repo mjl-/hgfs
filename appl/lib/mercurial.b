@@ -979,7 +979,7 @@ Revlog.xstorebuf(rl: self ref Revlog, buf: array of byte, rev: int): (int, array
 	# xxx actually make the delta, return base != rev.
 
 	compr := compress(buf);
-	if(0 && len compr < len buf*90/100) {
+	if(len compr < len buf*90/100) {
 		return (rev, compr);
 	} else {
 		nbuf := array[1+len buf] of byte;
@@ -1081,12 +1081,6 @@ xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
 		rl := r.xopenrevlog(name);
 		nchanges += rl.xstream(r, tr, b, 0, cl);
 		nfiles++;
-	}
-
-	case b.getc() {
-	Bufio->EOF =>	;
-	Bufio->ERROR =>	error(sprint("error reading end of changegroup: %r"));
-	* =>		error(sprint("data past end of changegroup..."));
 	}
 
 	warn(sprint("added %d changesets with %d changes to %d files", nchangesets, nchanges, nfiles));

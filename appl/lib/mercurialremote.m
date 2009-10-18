@@ -10,6 +10,14 @@ Mercurialremote: module
 		pick {
 		Http =>
 			url:	ref Http->Url;
+		Ssh =>
+			user,
+			host,
+			port,
+			dir:	string;
+			tossh,
+			fromssh:ref Sys->FD;
+			b:	ref Bufio->Iobuf;
 		}
 
 		xnew:		fn(r: ref Repo, path: string): ref Remrepo;
@@ -21,5 +29,6 @@ Mercurialremote: module
 		xbetween:	fn(rr: self ref Remrepo, pairs: list of ref (string, string)): list of list of string;
 		xchangegroup:	fn(rr: self ref Remrepo, roots: list of string): ref Sys->FD;
 		xchangegroupsubset:	fn(rr: self ref Remrepo, bases, heads: list of string): ref Sys->FD;
+		iscompressed:	fn(rr: self ref Remrepo): int;
 	};
 };

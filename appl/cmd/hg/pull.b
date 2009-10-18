@@ -119,18 +119,19 @@ init0()
 		newnodes: list of string;
 		for(l := remrepo.xbranches(nodes); l != nil; l = tl l) {
 			(tip, base, p1, p2) := *hd l;
-			say(sprint("looking at branches result, tip %s, base %s, p1 %s, p2 %s", fmtnode(tip), fmtnode(base), fmtnode(p1), fmtnode(p2)));
+			say(sprint("looking at branches result"));
+			say(sprint("\ttip  %s", tip));
+			say(sprint("\tbase %s", base));
+			say(sprint("\tp1   %s", p1));
+			say(sprint("\tp2   %s", p2));
 			if(isknown(base)) {
 				say(sprint("base known, scheduling for between"));
 				betweens = ref (tip, base)::betweens;
 			} else if(p1 == hg->nullnode) {
-				if(repo.xlastrev() >= 0) {
-					if(!fflag)
-						error(sprint("refusing to pull from unrelated repository without -f"));
-					if(!hasstr(cgbases, p1))
-						cgbases = p1::cgbases;
-				} else if(!hasstr(cgbases, hg->nullnode))
-					cgbases = hg->nullnode::cgbases;
+				if(repo.xlastrev() >= 0 && !fflag)
+					error(sprint("refusing to pull from unrelated repository without -f"));
+				if(!hasstr(cgbases, p1))
+					cgbases = p1::cgbases;
 			} else {
 				say(sprint("base is unknown, will be asking for %s and %s in next round", fmtnode(p1), fmtnode(p2)));
 				if(!hasstr(newnodes, p1))
@@ -180,10 +181,13 @@ init0()
 	say(sprint("changegroupsubset, bases %s;  heads %s", fmtnodelist(cgbases), fmtnodelist(newheads)));
 	fd := remrepo.xchangegroupsubset(cgbases, newheads);
 
-	(cfd, err) := filtertool->push(inflate, "z", fd, 0);
-	if(err != nil)
-		error(err);
-	b := bufio->fopen(cfd, Bufio->OREAD);
+	if(remrepo.iscompressed()) {
+		err: string;
+		(fd, err) = filtertool->push(inflate, "z", fd, 0);
+		if(err != nil)
+			error(err);
+	}
+	b := bufio->fopen(fd, Bufio->OREAD);
 	if(b == nil)
 		error("fopen");
 

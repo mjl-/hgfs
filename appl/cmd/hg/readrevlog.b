@@ -51,7 +51,7 @@ init(nil: ref Draw->Context, args: list of string)
 
 init0(path: string)
 {
-	rl := Revlog.xopen(nil, path, 0);
+	rl := Revlog.xopen(".", path, 0);
 	last := rl.xlastrev();
 
 	for(i := 0; i <= last; i++) {

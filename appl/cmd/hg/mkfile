@@ -18,6 +18,9 @@ TARG=\
 	commit.dis\
 	manifestdiff.dis\
 
+MODULES=\
+	../../lib/mercurialremote.m\
+
 SYSMODULES=\
 	mercurial.m\
 	arg.m\
