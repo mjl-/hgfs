@@ -21,8 +21,6 @@ include "mercurial.m";
 	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Config: import hg;
 include "mercurialremote.m";
 
-dflag: int;
-
 init()
 {
 	sys = load Sys Sys->PATH;

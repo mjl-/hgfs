@@ -11,6 +11,7 @@ include "string.m";
 include "util0.m";
 	util: Util0;
 	rev, l2a, warn, fail, readfile: import util;
+include "tables.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dsfile, Revlog, Repo, Change, Patch, Hunk: import hg;

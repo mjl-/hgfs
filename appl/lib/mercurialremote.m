@@ -2,6 +2,7 @@ Mercurialremote: module
 {
 	PATH:	con "/dis/lib/mercurialremote.dis";
 	init:	fn();
+	dflag:	int;
 
 	Remrepo: adt {
 		r:	ref Repo;

@@ -10,6 +10,7 @@ include "env.m";
 	env: Env;
 include "filter.m";
 	inflate: Filter;
+	deflate: Filter;
 include "filtertool.m";
 	filtertool: Filtertool;
 include "keyring.m";
@@ -42,6 +43,8 @@ init()
 	tables = load Tables Tables->PATH;
 	inflate = load Filter Filter->INFLATEPATH;
 	inflate->init();
+	deflate = load Filter Filter->DEFLATEPATH;
+	deflate->init();
 	filtertool = load Filtertool Filtertool->PATH;
 	util = load Util0 Util0->PATH;
 	util->init();
@@ -273,6 +276,22 @@ xopencreate(f: string, mode, perm: int): ref Sys->FD
 	return fd;
 }
 
+xopen(f: string, mode: int): ref Sys->FD
+{
+	fd := sys->open(f, mode);
+	if(fd == nil)
+		error(sprint("open %q: %r", f));
+	return fd;
+}
+
+xcreate(f: string, mode, perm: int): ref Sys->FD
+{
+	fd := sys->create(f, mode, perm);
+	if(fd == nil)
+		error(sprint("create %q: %r", f));
+	return fd;
+}
+
 xbopencreate(f: string, mode, perm: int): ref Iobuf
 {
 	fd := xopencreate(f, mode, perm);
@@ -353,7 +372,7 @@ xdirstate(r: ref Repo, all: int): ref Dirstate
 				if(dsf.size >= 0 && big dsf.size != dir.length) {
 					dsf.mtime = dir.mtime;
 					dsf.size = SZdirty;
-				} else if(dsf.size == SZcheck || dsf.mtime > now-4) {
+				} else if(dsf.size == SZcheck || dsf.mtime != now || dsf.mtime >= now-4) {
 					exp := r.xread(dsf.path, ds);
 					cur := xreadfile(f);
 					if(eq(exp, cur))
@@ -622,6 +641,7 @@ xreopen(rl: ref Revlog)
 		f := rl.path+".i";
 		rl.ifd = sys->open(f, Sys->OREAD);
 		if(rl.ifd == nil) {
+			rl.flags = Indexonly;
 			err := sprint("open %q: %r", f);
 			(ok, nil) := sys->stat(f);
 			if(ok != 0)
@@ -634,7 +654,7 @@ xreopen(rl: ref Revlog)
 	(ok, dir) := sys->fstat(rl.ifd);
 	if(ok < 0)
 		error(sprint("%r"));
-	if(dir.length == rl.ilength && dir.mtime == rl.imtime)
+	if(dir.length == rl.ilength && dir.mtime == rl.imtime && dir.qid.vers == rl.ivers)
 		return;
 
 say(sprint("revlog, reopen, path %q", rl.path));
@@ -658,15 +678,14 @@ say(sprint("revlog, reopen, path %q", rl.path));
 	rl.dfd = nil;
 	if(!isindexonly(rl)) {
 		dpath := rl.path+".d";
-		rl.dfd = sys->open(dpath, Sys->OREAD);
-		if(rl.dfd == nil)
-			error(sprint("open %q: %r", dpath));
+		rl.dfd = xopen(dpath, Sys->OREAD);
 		# xxx verify .d file is as expected?
 	}
 
 	xreadrevlog(rl, ib);
 	rl.ilength = dir.length;
 	rl.imtime = dir.mtime;
+	rl.imtime = dir.qid.vers;
 }
 
 # read through the entire revlog, store all entries in rl.entries.
@@ -678,6 +697,7 @@ xreadrevlog(rl: ref Revlog, ib: ref Iobuf)
 	ib.seek(big 0, Bufio->SEEKSTART);
 
 	l: list of ref Entry;
+	rl.tab = rl.tab.new(101, nil);
 	eb := array[Entrysize] of byte;
 	for(;;) {
 		n := breadn(ib, eb, len eb);
@@ -699,6 +719,7 @@ xreadrevlog(rl: ref Revlog, ib: ref Iobuf)
 		}
 
 		l = e::l;
+		rl.tab.add(e.nodeid, e);
 	}
 	rl.ents = l2a(util->rev(l));
 	rl.cache = array[len rl.ents] of array of byte;
@@ -709,16 +730,21 @@ say(sprint("readrevlog, len ents %d", len rl.ents));
 }
 
 
-Revlog.xopen(path: string, cacheall: int): ref Revlog
+Revlog.xopen(storedir, path: string, cacheall: int): ref Revlog
 {
 	say(sprint("revlog.open %q", path));
 	rl := ref Revlog;
-	rl.path = path;
+	rl.storedir = storedir;
+	rl.rlpath = path;
+	rl.path = storedir+"/"+path;
 	rl.fullrev = -1;
 	rl.cacheall = cacheall;
 
 	rl.ilength = ~big 0;
 	rl.imtime = ~0;
+	rl.ivers = ~0;
+	rl.tab = rl.tab.new(101, nil);
+
 	xreopen(rl);
 	return rl;
 }
@@ -768,9 +794,17 @@ xdecompress(d: array of byte): array of byte
 	# may be compressed, first byte will tell us.
 	case int d[0] {
 	'u' =>	return d[1:];
-	0 =>	return d;
+	0 =>	return d;	# common case for patches
 	* =>	return xinflate(d);
 	}
+}
+
+compress(d: array of byte): array of byte
+{
+	(nd, err) := filtertool->convert(deflate, "z", d);
+	if(err != nil)
+		error("deflate: "+err);
+	return nd;
 }
 
 xgetdata(rl: ref Revlog, e: ref Entry): array of byte
@@ -940,6 +974,21 @@ Revlog.xdelta(rl: self ref Revlog, prev, rev: int): array of byte
 	return delta;
 }
 
+Revlog.xstorebuf(rl: self ref Revlog, buf: array of byte, rev: int): (int, array of byte)
+{
+	# xxx actually make the delta, return base != rev.
+
+	compr := compress(buf);
+	if(0 && len compr < len buf*90/100) {
+		return (rev, compr);
+	} else {
+		nbuf := array[1+len buf] of byte;
+		nbuf[0] = byte 'u';
+		nbuf[1:] = buf;
+		return (rev, nbuf);
+	}
+}
+
 Revlog.xlength(rl: self ref Revlog, rev: int): big
 {
 	return big rl.xfind(rev).uncsize;
@@ -965,12 +1014,10 @@ Revlog.xfind(rl: self ref Revlog, rev: int): ref Entry
 Revlog.xfindnodeid(rl: self ref Revlog, n: string, need: int): ref Entry
 {
 	xreopen(rl);
-	for(i := 0; i < len rl.ents; i++)
-		if(rl.ents[i].nodeid == n)
-			return rl.ents[i];
-	if(need)
+	e := rl.tab.find(n);
+	if(e == nil && need)
 		error(sprint("no nodeid %q", n));
-	return nil;
+	return e;
 }
 
 Revlog.xlastrev(rl: self ref Revlog): int
@@ -996,6 +1043,153 @@ Revlog.xpread(rl: self ref Revlog, rev: int, n: int, off: big): array of byte
 		n = int (big len d-off);
 	d = d[int off:int off+n];
 	return d;
+}
+
+Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: string, link: int, buf: array of byte): ref Entry
+{
+	xreopen(rl);
+
+	p1rev := p2rev := -1;
+	if(p1 != nullnode) {
+		p1rev = rl.xfindnodeid(p1, 1).rev;
+		if(p2 != nullnode)
+			p2rev = rl.xfindnodeid(p2, 1).rev;
+	}
+	nodeid := xcreatenodeid(buf, p1, p2);
+
+	e := rl.xfindnodeid(nodeid, 0);
+	if(e != nil)
+		return e;
+
+	ipath := rl.path+".i";
+	dpath := rl.path+".d";
+	isize := dsize := big 0;
+	orev := -1;
+	nrev := 0;
+	offset := big 0;
+	if(len rl.ents > 0) {
+		orev = len rl.ents-1;
+		nrev = orev+1;
+		ee := rl.ents[orev];
+		offset = ee.offset+big ee.csize;
+		if(rl.isindexonly()) {
+			isize = ee.ioffset+big ee.csize;
+		} else {
+			isize = big (len rl.ents*Entrysize);
+			dsize = ee.offset+big ee.csize;
+		}
+	}
+
+	if(!tr.has(ipath))
+		tr.add(rl.rlpath+".i", isize);
+
+	# verify files are what we expect them to be, for sanity
+	if(isize != big 0) {
+		(ok, dir) := sys->stat(ipath);
+		if(ok != 0)
+			error(sprint("%q: %r", ipath));
+		if(dir.length != isize)
+			error(sprint("%q: unexpected length %bd, expected %bd", ipath, dir.length, isize));
+	}
+	if(dsize != big 0) {
+		(ok, dir) := sys->stat(dpath);
+		if(ok != 0)
+			error(sprint("%q: %r", dpath));
+		if(dir.length != dsize)
+			error(sprint("%q: unexpected length %bd, expected %bd", dpath, dir.length, dsize));
+	}
+
+	uncsize := len buf;
+	base: int;
+	(base, buf) = rl.xstorebuf(buf, nrev);
+
+	# if we grow a .i-only revlog to beyond 128k, create a .d and rewrite the .i
+	isindexonly := rl.isindexonly();
+	if(isindexonly && isize+big Entrysize+big len buf >= big (128*1024)) {
+		say(sprint("no longer indexonly, writing %q", dpath));
+
+		ifd := xopen(ipath, Sys->OREAD);
+		n := sys->readn(ifd, ibuf := array[int isize] of byte, len ibuf);
+		if(n < 0)
+			error(sprint("read %q: %r", ipath));
+		if(n != len ibuf)
+			error(sprint("short read on %q, expected %d, got %d", ipath, n, len ibuf));
+
+		nipath := ipath+".new";
+		r.xensuredirs(nipath);
+		nifd := xcreate(nipath, Sys->OWRITE|Sys->OEXCL, 8r666);
+		ib := bufio->fopen(nifd, Sys->OWRITE);
+
+		dfd := xcreate(dpath, Sys->OWRITE|Sys->OEXCL, 8r666);
+		db := bufio->fopen(dfd, Sys->OWRITE);
+		isize = big 0;
+		dsize = big 0;
+		for(i := 0; i < len rl.ents; i++) {
+			e = rl.ents[i];
+
+			if(i == 0)
+				p16(ibuf, 0, 0); # clear the Indexonly bits
+
+			ioff := int e.ioffset;
+			if(ib.write(ibuf[ioff-Entrysize:ioff], Entrysize) != Entrysize)
+				error(sprint("write %q: %r", nipath));
+
+			if(db.write(ibuf[ioff:ioff+e.csize], e.csize) != e.csize)
+				error(sprint("write %q: %r", dpath));
+
+			dsize += big e.csize;
+			e.ioffset = big 0;
+		}
+		isize = big (len rl.ents*Entrysize);
+		if(ib.flush() == Bufio->ERROR)
+			error(sprint("write %q: %r", ipath));
+		if(db.flush() == Bufio->ERROR)
+			error(sprint("write %q: %r", dpath));
+
+		# xxx styx cannot do this atomically...
+		say(sprint("removing current, renaming new, %q and %q", ipath, nipath));
+		ndir := sys->nulldir;
+		ndir.name = str->splitstrr(ipath, "/").t1;
+		if(sys->remove(ipath) != 0 || sys->fwstat(nifd, ndir) != 0)
+			error(sprint("remove %q and rename of %q failed: %r", ipath, nipath));
+
+		isindexonly = 0;
+
+		tr.add(rl.rlpath+".d", dsize);
+		tr.add(rl.rlpath+".i", isize);
+	}
+
+	ioffset := big 0;
+	if(isindexonly)
+		ioffset = isize+big Entrysize;
+
+	flags := 0;
+	e = ref Entry (nrev, offset, ioffset, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
+say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
+	ebuf := array[Entrysize] of byte;
+	e.xpack(ebuf, isindexonly);
+	nents := array[len rl.ents+1] of ref Entry;
+	nents[:] = rl.ents;
+	nents[len rl.ents] = e;
+	rl.ents = nents;
+	rl.tab.add(e.nodeid, e);
+
+	r.xensuredirs(ipath);
+	ifd := xopencreate(ipath, Sys->OWRITE, 8r666);
+	if(sys->pwrite(ifd, ebuf, len ebuf, isize) != len ebuf)
+		error(sprint("write %q: %r", ipath));
+	isize += big Entrysize;
+	if(isindexonly) {
+		if(sys->pwrite(ifd, buf, len buf, isize) != len buf)
+			error(sprint("write %q: %r", ipath));
+	} else {
+		if(!tr.has(dpath))
+			tr.add(rl.rlpath+".d", dsize);
+		dfd := xopencreate(dpath, Sys->OWRITE, 8r666);
+		if(sys->pwrite(dfd, buf, len buf, dsize) != len buf)
+			error(sprint("write %q: %r", dpath));
+	}
+	return e;
 }
 
 xreadlines(b: ref Iobuf): list of string
@@ -1132,10 +1326,8 @@ Repo.storedir(r: self ref Repo): string
 
 Repo.xopenrevlog(r: self ref Repo, path: string): ref Revlog
 {
-	path = r.storedir()+"/data/"+r.escape(path);
-	return Revlog.xopen(path, 0);
+	return Revlog.xopen(r.storedir(), "data/"+r.escape(path), 0);
 }
-
 
 Repo.xrevision(r: self ref Repo, rev: int): (ref Change, ref Manifest)
 {
@@ -1534,14 +1726,14 @@ Repo.xheads(r: self ref Repo): array of ref Entry
 Repo.xchangelog(r: self ref Repo): ref Revlog
 {
 	if(r.cl == nil)
-		r.cl = Revlog.xopen(r.storedir()+"/00changelog", 0);
+		r.cl = Revlog.xopen(r.storedir(), "00changelog", 0);
 	return r.cl;
 }
 
 Repo.xmanifestlog(r: self ref Repo): ref Revlog
 {
 	if(r.ml == nil)
-		r.ml = Revlog.xopen(r.storedir()+"/00manifest", 0);
+		r.ml = Revlog.xopen(r.storedir(), "00manifest", 0);
 	return r.ml;
 }
 
@@ -2148,6 +2340,60 @@ xreadconfig(path: string): ref Config
 	}
 	c.l = rev(c.l);
 	return c;
+}
+
+Repo.xtransact(r: self ref Repo): ref Transact
+{
+	f := r.storedir()+"/undo";
+	tr := ref Transact;
+	tr.fd = xcreate(f, Sys->OWRITE|Sys->OTRUNC, 8r666);
+	tr.tab = tr.tab.new(101, nil);
+	return tr;
+}
+
+Repo.xrollback(r: self ref Repo, tr: ref Transact)
+{
+	err: string;
+	seen := tr.tab.new(101, nil);
+	dir := sys->nulldir;
+	storedir := r.storedir();
+	for(l := tr.l; l != nil; l = tl l) {
+		rs := hd l;
+		if(seen.find(rs.path) != nil)
+			continue;
+		dir.length = rs.off;
+		f := storedir+"/"+rs.path;
+		if(sys->wstat(f, dir) != 0 && err == nil)
+			err = sprint("rollback %q to %bd", rs.path, rs.off);
+	}
+	f := r.storedir()+"/undo";
+	if(sys->remove(f) != 0 && err == nil)
+		err = sprint("remove %q: %r", f);
+	if(err != nil)
+		error(err);
+}
+
+Repo.xcommit(r: self ref Repo, nil: ref Transact)
+{
+	f := r.storedir()+"/undo";
+	if(sys->wstat(f, sys->nulldir) != 0)
+		error(sprint("sync: %r"));
+}
+
+Transact.has(tr: self ref Transact, path: string): int
+{
+	return tr.tab.find(path) != nil;
+}
+
+Transact.add(tr: self ref Transact, path: string, off: big)
+{
+	line := array of byte (path+"\0"+string off+"\n");
+	if(sys->write(tr.fd, line, len line) != len line)
+		error(sprint("writing undo: %r"));
+	rs := ref Revlogstate (path, off);
+	if(tr.tab.find(rs.path) == nil)
+		tr.tab.add(rs.path, rs);  # only one entry is enough
+	tr.l = rs::tr.l;
 }
 
 Config.find(c: self ref Config, sec, name: string): (int, string)

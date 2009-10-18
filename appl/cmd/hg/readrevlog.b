@@ -8,6 +8,7 @@ include "arg.m";
 include "bufio.m";
 include "string.m";
 	str: String;
+include "tables.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change: import hg;
@@ -50,7 +51,7 @@ init(nil: ref Draw->Context, args: list of string)
 
 init0(path: string)
 {
-	rl := Revlog.xopen(path, 0);
+	rl := Revlog.xopen(nil, path, 0);
 	last := rl.xlastrev();
 
 	for(i := 0; i <= last; i++) {

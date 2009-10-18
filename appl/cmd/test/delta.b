@@ -8,6 +8,7 @@ include "arg.m";
 include "bufio.m";
 include "string.m";
 	str: String;
+include "tables.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dsfile, Revlog, Repo, Change: import hg;

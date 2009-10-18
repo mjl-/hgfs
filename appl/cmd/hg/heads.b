@@ -10,6 +10,7 @@ include "daytime.m";
 	daytime: Daytime;
 include "string.m";
 	str: String;
+include "tables.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change: import hg;

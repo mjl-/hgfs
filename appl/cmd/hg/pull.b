@@ -35,7 +35,7 @@ HgPull: module {
 
 
 dflag: int;
-Cflag: int;
+fflag: int;
 repo: ref Repo;
 hgpath := "";
 revstr: string;
@@ -62,12 +62,12 @@ init(nil: ref Draw->Context, args: list of string)
 	hgrem->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] [-h path] [-r rev] [source]");
+	arg->setusage(arg->progname()+" [-d] [-h path] [-f] [-r rev] [source]");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	hg->debug = dflag++;
-		'C' =>	Cflag++;
+		'd' =>	hg->debug = hgrem->dflag = dflag++;
 		'h' =>	hgpath = arg->earg();
+		'f' =>	fflag++;
 		'r' =>	revstr = arg->earg();
 		* =>	arg->usage();
 		}
@@ -124,8 +124,12 @@ init0()
 				say(sprint("base known, scheduling for between"));
 				betweens = ref (tip, base)::betweens;
 			} else if(p1 == hg->nullnode) {
-				say(sprint("base is first revision that we don't know, going to fetch nullnode"));
-				if(!hasstr(cgbases, hg->nullnode))
+				if(repo.xlastrev() >= 0) {
+					if(!fflag)
+						error(sprint("refusing to pull from unrelated repository without -f"));
+					if(!hasstr(cgbases, p1))
+						cgbases = p1::cgbases;
+				} else if(!hasstr(cgbases, hg->nullnode))
 					cgbases = hg->nullnode::cgbases;
 			} else {
 				say(sprint("base is unknown, will be asking for %s and %s in next round", fmtnode(p1), fmtnode(p2)));
@@ -185,13 +189,15 @@ init0()
 
 	warn("adding changesets");
 	cl := repo.xchangelog();
-	chtab := revlogwrite(b, cl, 1, nil);
+	(chtab, nchangesets) := revlogwrite(b, cl, 1, nil);
 
 	warn("adding manifests");
 	ml := repo.xmanifestlog();
 	revlogwrite(b, ml, 0, chtab);
 	
 	warn("adding file changes");
+	nfiles := 0;
+	nchanges := 0;
 	for(;;) {
 		i := bg32(b);
 		if(i == 0)
@@ -200,7 +206,9 @@ init0()
 		namebuf := breadn(b, i-4);
 		name := string namebuf;
 		rl := repo.xopenrevlog(name);
-		revlogwrite(b, rl, 0, chtab);
+		(nil, nn) := revlogwrite(b, rl, 0, chtab);
+		nfiles++;
+		nchanges += nn;
 	}
 
 	case b.getc() {
@@ -209,8 +217,7 @@ init0()
 	* =>		error(sprint("data past end of changegroup..."));
 	}
 
-	#warn(sprint("added %d changesets with %d changes to %d files", tablength(chtab), nchanges, nfiles));
-	warn(sprint("added l changesets with m changes to n files"));
+	warn(sprint("added %d changesets with %d changes to %d files", nchangesets, nchanges, nfiles));
 }
 
 isknown(n: string): int
@@ -251,7 +258,7 @@ fmtnode(s: string): string
 	return s[:12];
 }
 
-revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref Entry]): ref Strhash[ref Entry]
+revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref Entry]): (ref Strhash[ref Entry], int)
 {
 	tab := Strhash[ref Entry].new(31, nil);
 	ents := rl.xentries();
@@ -284,6 +291,7 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 	}
 	deltasizes := 0;
 
+	nchanges := 0;
 	for(;;) {
 		i = bg32(b);
 		if(i == 0)
@@ -401,13 +409,14 @@ revlogwrite(b: ref Iobuf, rl: ref Revlog, ischlog: int, chtab: ref Strhash[ref E
 
 		offset += big len data;
 		tab.add(e.nodeid, e);
+		nchanges++;
 	}
 
 	if(ib.flush() == Bufio->ERROR)
 		error(sprint("write: %r"));
 	if(db != nil && db.flush() == Bufio->ERROR)
 		error(sprint("write: %r"));
-	return tab;
+	return (tab, nchanges);
 }
 
 findentry(name, rev: string, tab: ref Strhash[ref Entry], n: string): ref Entry

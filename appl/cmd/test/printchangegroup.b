@@ -12,6 +12,7 @@ include "string.m";
 	str: String;
 include "encoding.m";
 	base16: Encoding;
+include "tables.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dsfile, Revlog, Repo, Change, Patch, Hunk: import hg;

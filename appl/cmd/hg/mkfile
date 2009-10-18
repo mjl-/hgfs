@@ -8,10 +8,8 @@ TARG=\
 	status.dis\
 	readrevlog.dis\
 	update.dis\
-	identify.dis\
+	id.dis\
 	pull.dis\
-	init.dis\
-	clone.dis\
 	verify.dis\
 	add.dis\
 	rm.dis\

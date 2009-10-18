@@ -1,0 +1,24 @@
+#!/dis/sh.dis
+
+load std arg
+
+fn warn {echo $* >[2=1]}
+fn error {warn $*; raise error}
+fn usage {warn 'usage: hg/clone [-d] [-r rev] remote dest'; raise usage}
+
+dflag=()
+rev=()
+(arg
+	d	{dflag=(-d)}
+	r+	{rev=(-r $arg)}
+	-	$*
+)
+
+echo clone: $#* $*
+if {! ~ $#* 2} {usage}
+
+(remote dest)=$*
+
+hg/init $dflag $dest &&
+{echo '[paths]'; echo 'default = '$remote} >$dest/.hg/hgrc &&
+hg/pull $dflag $rev -h $dest/.hg/

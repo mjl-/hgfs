@@ -53,7 +53,7 @@ mkdir $fs >[2]/dev/null
 if {! test -d $fs/files} {mount {hg/fs -h $root} $fs || error 'mount failed'}
 
 if {~ $#revs 0} {
-	rev=${slice 0 12 "{hg/identify -h $root}}
+	rev=${slice 0 12 "{hg/id -h $root}}
 	files=$fs/files/$rev
 	hg/status -h $root | getlines {
 	rescue 'nomatch' {raise continue} {

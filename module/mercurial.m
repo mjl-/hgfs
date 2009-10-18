@@ -132,13 +132,16 @@ Mercurial: module
 	Version0, Version1:	con iota;
 
 	Revlog: adt {
-		path:	string;
+		storedir,	# of repo
+		rlpath,		# relative to store
+		path:	string;	# full path
 		ifd:	ref Sys->FD;
 		dfd:	ref Sys->FD;  # nil when .i-only
 		bd:	ref Bufio->Iobuf;
 		version:int;
 		flags:	int;
 		ents:	array of ref Entry;
+		tab:	ref Tables->Strhash[ref Entry];
 
 		# cache of decompressed revisions (delta's).
 		# cacheall caches all of them, for changelog & manifest.
@@ -153,19 +156,24 @@ Mercurial: module
 		# .i time & length of latest reread, for determining freshness
 		ilength:	big;
 		imtime:	int;
+		ivers:	int;
 
-		xopen:		fn(path: string, cacheall: int): ref Revlog;
+		xopen:		fn(storedir, path: string, cacheall: int): ref Revlog;
 		xget:		fn(rl: self ref Revlog, rev: int): array of byte;
 		xgetnodeid:	fn(rl: self ref Revlog, n: string): array of byte;
 		xlastrev:	fn(rl: self ref Revlog): int;
 		xfind:		fn(rl: self ref Revlog, rev: int): ref Entry;
 		xfindnodeid:	fn(rl: self ref Revlog, n: string, need: int): ref Entry;
 		xdelta:		fn(rl: self ref Revlog, prev, rev: int): array of byte;
+		xstorebuf:	fn(rl: self ref Revlog, buf: array of byte, rev: int): (int, array of byte);
 		xpread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): array of byte;
 		xlength:	fn(rl: self ref Revlog, rev: int): big;
 
 		xentries:	fn(rl: self ref Revlog): array of ref Entry;
 		isindexonly:	fn(rl: self ref Revlog): int;
+		xappend:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, p1, p2: string, link: int, buf: array of byte): ref Entry;
+
+		#xstream;	fn(rl: ref Revlog, tr: ref Transact, cg: ref Bufio->Iobuf, ischlog: int, cl: ref Revlog): int;
 	};
 
 	Repo: adt {
@@ -210,6 +218,23 @@ Mercurial: module
 		xunescape:	fn(r: self ref Repo, path: string): string;
 		xensuredirs:	fn(r: self ref Repo, fullrlpath: string);
 		xreadconfig:	fn(r: self ref Repo): ref Config;
+		xtransact:	fn(r: self ref Repo): ref Transact;
+		xrollback:	fn(r: self ref Repo, tr: ref Transact);
+		xcommit:	fn(r: self ref Repo, tr: ref Transact);
+	};
+
+	Revlogstate: adt {
+		path:	string;
+		off:	big;
+	};
+
+	Transact: adt {
+		fd:	ref Sys->FD;
+		tab:	ref Tables->Strhash[ref Revlogstate];
+		l:	list of ref Revlogstate;
+
+		has:	fn(tr: self ref Transact, path: string): int;
+		add:	fn(tr: self ref Transact, path: string, off: big);
 	};
 
 	Section: adt {

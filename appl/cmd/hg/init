@@ -1,0 +1,23 @@
+#!/dis/sh.dis
+
+load std string arg
+
+fn warn {echo $* >[2=1]}
+fn error {warn $*; raise error}
+fn usage {warn 'usage: hg/init [-d] [path]'; raise usage}
+
+dflag=0
+(arg
+	d	{dflag=1}
+	-	$*
+)
+
+if {! ~ $#* (0 1)} {usage}
+
+dir=.
+if {~ $#* 1} {
+	dir=$1
+	mkdir $dir || raise error
+}
+
+{mkdir $dir/.hg && mkdir $dir/.hg/store && {echo revlogv1; echo store} >$dir/.hg/requires} || exit bad

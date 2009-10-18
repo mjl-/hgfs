@@ -23,7 +23,7 @@ include "filtertool.m";
 	filtertool: Filtertool;
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
+	Transact, Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
 include "util0.m";
 	util: Util0;
 	readfd, rev, join, readfile, l2a, inssort, warn, fail: import util;
@@ -38,6 +38,7 @@ vflag: int;
 repo: ref Repo;
 hgpath := "";
 msg: string;
+tr: ref Transact;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -74,6 +75,7 @@ init(nil: ref Draw->Context, args: list of string)
 	{ init0(args); }
 	exception e {
 	"hg:*" =>
+		repo.xrollback(tr);
 		fail(e[3:]);
 	}
 }
@@ -117,6 +119,8 @@ init0(args: list of string)
 			error("empty commit message, aborting");
 	}
 
+	tr = repo.xtransact();
+
 	files := l2a(r);
 	inssort(files, pathge);
 	filenodeids := array[len files] of string;
@@ -151,13 +155,13 @@ init0(args: list of string)
 		rl := repo.xopenrevlog(path);
 
 		fp1 := fp2 := hg->nullnode;
-		if(m1 != nil && (mf1 := m1.find(path)) != nil)
+		if((mf1 := m1.find(path)) != nil)
 			fp1 = mf1.nodeid;
-		if(m2 != nil && (mf2 := m2.find(path)) != nil)
+		if((mf2 := m2.find(path)) != nil)
 			fp2 = mf2.nodeid;
 
 		say(sprint("adding to revlog for file %#q, fp1 %s, fp2 %s", path, fp1, fp2));
-		ne := revlogadd(rl, fp1, fp2, link, buf);
+		ne := rl.xappend(repo, tr, fp1, fp2, link, buf);
 		filenodeids[i] = ne.nodeid;
 		say(sprint("file now at nodeid %s", ne.nodeid));
 
@@ -173,92 +177,18 @@ init0(args: list of string)
 	say("adding to manifest");
 	ml := repo.xmanifestlog();
 	mbuf := m.xpack();
-	me := revlogadd(ml, m1.nodeid, m2.nodeid, link, mbuf);
+	me := ml.xappend(repo, tr, m1.nodeid, m2.nodeid, link, mbuf);
 
 	say("adding to changelog");
 	cl := repo.xchangelog();
 	cmsg := sprint("%s\n%s\n%d %d\n%s\n\n%s", me.nodeid, user, now, tzoff, join(rev(modfiles), "\n"), msg);
 	say(sprint("change message:"));
 	say(cmsg);
-	ce := revlogadd(cl, ds.p1, ds.p2, link, array of byte cmsg);
+	ce := cl.xappend(repo, tr, ds.p1, ds.p2, link, array of byte cmsg);
 
 	nds.p1 = ce.nodeid;
 	repo.xwritedirstate(nds);
-}
-
-revlogadd(rl: ref Revlog, p1, p2: string, link: int, buf: array of byte): ref Entry
-{
-	ents := rl.xentries();
-	orev := -1;
-	offset := big 0;
-	if(len ents > 0) {
-		ee := ents[len ents-1];
-		orev = ee.rev;
-		offset = ee.offset+big ee.csize;
-	}
-	nrev := orev+1;
-
-	p1rev := p2rev := -1;
-	if(p1 != hg->nullnode) {
-		p1rev = findrev(ents, p1);
-		if(p2 != hg->nullnode)
-			p2rev = findrev(ents, p2);
-	}
-
-	nodeid := hg->xcreatenodeid(buf, p1, p2);
-
-	# xxx should make a patch and use it if patches+newpatch < 2*newsize
-	uncsize := len buf;
-	compr := compress(buf);
-	if(len compr < len buf*90/100) {
-		buf = compr;
-	} else {
-		nbuf := array[1+len buf] of byte;
-		nbuf[0] = byte 'u';
-		nbuf[1:] = buf;
-		buf = nbuf;
-	}
-
-	flags := 0;
-	base := nrev; # xxx fix when we stop inserting full copies
-	isindexonly := rl.isindexonly();
-	e := ref Entry (nrev, offset, big 0, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
-say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
-	ebuf := array[hg->Entrysize] of byte;
-	e.xpack(ebuf, isindexonly);
-
-	# xxx if length current .i file < 128k and length current .i+64+len buf >= 128k, copy all data to .d file and create new .i
-	ipath := rl.path+".i";
-	repo.xensuredirs(ipath);
-	ib := hg->xbopencreate(ipath, Sys->OWRITE, 8r666);
-	if(ib.seek(big 0, Bufio->SEEKEND) < big 0)
-		error(sprint("open %q: %r", ipath));
-	if(ib.write(ebuf, len ebuf) != len ebuf)
-		error(sprint("write %q: %r", ipath));
-	if(isindexonly) {
-		if(ib.write(buf, len buf) != len buf)
-			error(sprint("write %q: %r", ipath));
-	} else {
-		dpath := rl.path+".d";
-		dfd := hg->xopencreate(dpath, Sys->OWRITE, 8r666);
-		if(dfd == nil || ((nil, dir) := sys->fstat(dfd)).t0 != 0)
-			error(sprint("open %q: %r", dpath));
-		if(sys->pwrite(dfd, buf, len buf, dir.length) != len buf)
-			error(sprint("write %q: %r", dpath));
-	}
-	if(ib.flush() == Bufio->ERROR)
-		error(sprint("write %q: %r", ipath));
-
-	return e;
-}
-
-findrev(ents: array of ref Entry, n: string): int
-{
-	for(i := 0; i < len ents; i++)
-		if(ents[i].nodeid == n)
-			return i;
-	error(sprint("no such nodeid %q", n));
-	return -1; # not reached
+	repo.xcommit(tr);
 }
 
 inspect(r, l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], path: string): list of ref Dsfile
@@ -321,14 +251,6 @@ manifestmerge(m1, m2: ref Manifest): ref Manifest
 pathge(a, b: ref Dsfile): int
 {
 	return a.path >= b.path;
-}
-
-compress(d: array of byte): array of byte
-{
-	(nd, err) := filtertool->convert(deflate, "z", d);
-	if(err != nil)
-		error("deflate: "+err);
-	return nd;
 }
 
 error(s: string)
