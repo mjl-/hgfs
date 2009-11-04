@@ -51,7 +51,7 @@ init(nil: ref Draw->Context, args: list of string)
 	args = arg->argv();
 	if(len args > 1)
 		arg->usage();
-	revstr := "tip";
+	revstr: string;
 	if(len args == 1)
 		revstr = hd args;
 
@@ -66,8 +66,11 @@ init0(revstr: string)
 {
 	repo = Repo.xfind(hgpath);
 	ds := hg->xdirstate(repo, 0);
+	if(revstr == nil)
+		revstr = repo.xworkbranch();
+	if(ds.p1 != hg->nullnode && ds.p2 != hg->nullnode && !Cflag)
+		error("in merge, refusing to update without -C");
 
-	# xxx do special things when two parents are present (i.e. we were merging)?
 	onodeid := ds.p1;
 	(orev, nil) := repo.xlookup(onodeid, 1);
 	say(sprint("current rev %d nodeid %q", orev, onodeid));

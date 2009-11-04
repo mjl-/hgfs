@@ -39,10 +39,6 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- hg/update: should update to the branch tip, not the repo tip.
-- hg/update: should fail to update without -C when there are two
-  parents, or for cross-branch update (unless the target name specified
-  was the branch?)
 - hg/status (and others probably): fix handling of paths, e.g.
   "hg/status" in dir1/ should list all changes in the repo, "hg/status ."
   in dir1/ should list only those in dir1/.
@@ -63,6 +59,7 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
   combined.
 - hg/verify: verify that list of modified files in changelog entry
   matches with the files changed in the manifest.
+- hg/pull: more verification that received data is correct.
 - read up on all the formats.  dirstate, undo.dirstate undo.branch
   (for rollback), journal.dirstate, journal.branch, wlock;  lock,
   journal, fncache, etc.;  http://mercurial.selenic.com/wiki/FileFormats
