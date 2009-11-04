@@ -1,22 +1,18 @@
-implement HgTestapply;
+implement HgApplydelta;
 
 include "sys.m";
 	sys: Sys;
 	sprint: import sys;
 include "draw.m";
 include "arg.m";
-include "bufio.m";
-include "string.m";
-	str: String;
 include "util0.m";
 	util: Util0;
 	rev, l2a, warn, fail, readfile: import util;
-include "tables.m";
-include "mercurial.m";
-	hg: Mercurial;
-	Dirstate, Dsfile, Revlog, Repo, Change, Patch, Hunk: import hg;
+include "../../lib/bdiff.m";
+	bdiff: Bdiff;
+	Patch, Delta: import bdiff;
 
-HgTestapply: module {
+HgApplydelta: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
 };
 
@@ -27,17 +23,16 @@ init(nil: ref Draw->Context, args: list of string)
 {
 	sys = load Sys Sys->PATH;
 	arg := load Arg Arg->PATH;
-	str = load String String->PATH;
 	util = load Util0 Util0->PATH;
 	util->init();
-	hg = load Mercurial Mercurial->PATH;
-	hg->init(0);
+	bdiff = load Bdiff Bdiff->PATH;
+	bdiff->init();
 
 	arg->init(args);
-	arg->setusage(arg->progname()+" [-d] base patch1 ...");
+	arg->setusage(arg->progname()+" [-d] base delta1 ...");
 	while((c := arg->opt()) != 0)
 		case c {
-		'd' =>	hg->debug = dflag++;
+		'd' =>	dflag++;
 		* =>	arg->usage();
 		}
 	args = arg->argv();
@@ -53,12 +48,10 @@ init(nil: ref Draw->Context, args: list of string)
 			fail(sprint("%r"));
 	}
 	l = rev(l);
-	{
-		r := Patch.xapplymany(base, l2a(l));
-		if(sys->write(sys->fildes(1), r, len r) != len r)
-			fail(sprint("write: %r"));
-	} exception x {
-	"hg:*" =>
-		fail(x[3:]);
-	}
+
+	(r, err) := Delta.applymany(base, l2a(l));
+	if(err != nil)
+		fail(err);
+	if(sys->write(sys->fildes(1), r, len r) != len r)
+		fail(sprint("write: %r"));
 }

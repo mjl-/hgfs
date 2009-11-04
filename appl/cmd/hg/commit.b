@@ -75,7 +75,8 @@ init(nil: ref Draw->Context, args: list of string)
 	{ init0(args); }
 	exception e {
 	"hg:*" =>
-		repo.xrollback(tr);
+		if(tr != nil)
+			repo.xrollback(tr);
 		fail(e[3:]);
 	}
 }

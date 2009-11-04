@@ -39,12 +39,22 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
+- hg/update: should update to the branch tip, not the repo tip.
+- hg/update: should fail to update without -C when there are two
+  parents, or for cross-branch update (unless the target name specified
+  was the branch?)
+- hg/status (and others probably): fix handling of paths, e.g.
+  "hg/status" in dir1/ should list all changes in the repo, "hg/status ."
+  in dir1/ should list only those in dir1/.
+- hg/mv, hg/cp, hg/push, hg/merge, hg/rollback, hg/bundle, hg/unbundle
 - hg/update: for local modifications (as returned by hg/status),
   only refuse to update if their state is actually different from
   that in new revision.  i.e. for "add", don't complain if new revision
   has that file and it has the same contents.  for "remove", don't
   complain if new revision has that file removed.  for "update", check
   if new revision has same data for file.
+- for abort while in write transaction, for truncates to zero length,
+  remove the files instead.
 - for dirstate, handle needmerge more like modified?  i.e. verify
   that it really changed, especially during commit.
 - for commit,update,etc, handle dirstate with p1 & p2 (merge).
@@ -56,6 +66,8 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 - read up on all the formats.  dirstate, undo.dirstate undo.branch
   (for rollback), journal.dirstate, journal.branch, wlock;  lock,
   journal, fncache, etc.;  http://mercurial.selenic.com/wiki/FileFormats
+- hg/fs: fix (revert) sizes of files in hg/fs when they have meta-data
+  (cannot use entry.uncsize for that reason, i forgot).
 - library: think about caching of revlogs per repo, caching of
   entries in repo's and perhaps try reading less to become up to date.
 

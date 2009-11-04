@@ -25,7 +25,10 @@ include "tables.m";
 	Strhash: import tables;
 include "util0.m";
 	util: Util0;
-	g32i, eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
+	g16, g32i, eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
+include "bdiff.m";
+	bdiff: Bdiff;
+	Delta: import bdiff;
 include "mercurial.m";
 
 
@@ -35,7 +38,7 @@ init(rdonly: int)
 {
 	sys = load Sys Sys->PATH;
 	bufio = load Bufio Bufio->PATH;
-	bufio->open("/dev/null", Bufio->OREAD); # xxx ensure bufio is properly initialized
+	bufio->open("/dev/null", Bufio->OREAD); # ensure bufio is properly initialized
 	env = load Env Env->PATH;
 	keyring = load Keyring Keyring->PATH;
 	str = load String String->PATH;
@@ -48,6 +51,8 @@ init(rdonly: int)
 	filtertool = load Filtertool Filtertool->PATH;
 	util = load Util0 Util0->PATH;
 	util->init();
+	bdiff = load Bdiff Bdiff->PATH;
+	bdiff->init();
 
 	readonly = rdonly;
 }
@@ -352,11 +357,11 @@ xdirstate(r: ref Repo, all: int): ref Dirstate
 		dsf.state = find(statestrs, sprint("%c", int stb));
 		if(dsf.state < 0)
 			error(sprint("bad state in dirstate at offset %bd, char %#x, %c", off, int stb, int stb));
-		(dsf.mode, o) = g32(buf, o);
-		(dsf.size, o) = g32(buf, o);
-		(dsf.mtime, o) = g32(buf, o);
+		(dsf.mode, o) = g32i(buf, o);
+		(dsf.size, o) = g32i(buf, o);
+		(dsf.mtime, o) = g32i(buf, o);
 		length: int;
-		(length, o) = g32(buf, o);
+		(length, o) = g32i(buf, o);
 		if(length >= 2*1024)
 			error(sprint("implausible path length %d in dirstate", length));
 		n = b.read(namebuf := array[length] of byte, len namebuf);
@@ -542,7 +547,6 @@ Change.findextra(c: self ref Change, k: string): (string, string)
 Change.hasfile(c: self ref Change, f: string): int
 {
 	dir := f+"/";
-	r: list of string;
 	for(l := c.files; l != nil; l = tl l)
 		if(hd l == f || prefix(dir, hd l))
 			return 1;
@@ -773,6 +777,7 @@ Revlog.xopen(storedir, path: string, cacheall: int): ref Revlog
 	rl.rlpath = path;
 	rl.path = storedir+"/"+path;
 	rl.fullrev = -1;
+	rl.ncache = 0;
 	rl.cacheall = cacheall;
 
 	rl.ilength = ~big 0;
@@ -800,12 +805,12 @@ Revlog.isindexonly(rl: self ref Revlog): int
 	return rl.flags & Indexonly;
 }
 
-xreconstruct(rl: ref Revlog, e: ref Entry, base: array of byte, patches: array of array of byte): array of byte
+xreconstruct(rl: ref Revlog, e: ref Entry, base: array of byte, deltas: array of array of byte): array of byte
 {
-say(sprint("reconstruct, len base %d, len patches %d, e.rev %d", len base, len patches, e.rev));
-
 	# first is base, later are patches
-	d := Patch.xapplymany(base, patches);
+	(d, err) := Delta.applymany(base, deltas);
+	if(err != nil)
+		error("applying patch: "+err);
 
 	# verify data is correct
 	pn1 := pn2 := nullnode;
@@ -858,10 +863,9 @@ xgetdata(rl: ref Revlog, e: ref Entry): array of byte
 	}
 
 	if(rl.bd.seek(e.ioffset, Bufio->SEEKSTART) != e.ioffset)
-		error(sprint("seek %bd: %r", e.ioffset));
+		error(sprint("seek %q %bd: %r", rl.path, e.ioffset));
 	if(breadn(rl.bd, buf := array[e.csize] of byte, len buf) != len buf)
-		error(sprint("read: %r"));
-	#say(sprint("getdata, %d compressed bytes for rev %d", len buf, e.rev));
+		error(sprint("read %q: %r", rl.path));
 	buf = xdecompress(buf);
 	#say(sprint("getdata, %d decompressed bytes for rev %d", len buf, e.rev));
 
@@ -880,7 +884,7 @@ xgetdata(rl: ref Revlog, e: ref Entry): array of byte
 # the head of the result is the base of the data, the other buffers are the delta's
 xgetbufs(rl: ref Revlog, e: ref Entry): array of array of byte
 {
-	#say(sprint("getbufs, rev %d, base %d, fullrev %d", e.rev, e.base, rl.fullrev));
+	say(sprint("getbufs, rev %d, base %d, fullrev %d", e.rev, e.base, rl.fullrev));
 	usefull := rl.fullrev > e.base && rl.fullrev <= e.rev;
 	base := e.base;
 	if(usefull)
@@ -947,7 +951,7 @@ dropmeta(d: array of byte): array of byte
 	return d[i:];
 }
 
-# return the revision data, without meta-data
+# return the revision data
 xget(rl: ref Revlog, e: ref Entry, withmeta: int): array of byte
 {
 	if(e.rev == rl.fullrev) {
@@ -980,11 +984,11 @@ Revlog.xgetnodeid(rl: self ref Revlog, n: string): array of byte
 
 
 # create delta from prev to rev.  prev may be -1.
-# the typical and easy case is that prev is rev predecessor, and we can use the delta from the revlog.
+# the typical and easy case is that prev is rev's predecessor and rev is not a base,
+# and we can use the delta from the revlog.
 # otherwise we'll have to create a patch.  for prev -1 this simply means making
 # a patch with the entire file contents.
-# for prev >= 0, we should generate a patch.  instead, for now we'll patch over the entire file.
-# xxx
+# for prev >= 0, we generate a delta.
 Revlog.xdelta(rl: self ref Revlog, prev, rev: int): array of byte
 {
 	#say(sprint("delta, prev %d, rev %d", prev, rev));
@@ -994,34 +998,48 @@ Revlog.xdelta(rl: self ref Revlog, prev, rev: int): array of byte
 		return xgetdata(rl, e);
 
 	buf := xget(rl, e, 1);
-	obuflen := 0;
+	obuf := array[0] of byte;
 	if(prev >= 0) {
 		pe := rl.xfind(prev);
-		obuflen = pe.uncsize;
+		obuf = xget(rl, pe, 1);
 	}
-	#say(sprint("delta with full contents, start %d end %d size %d, e %s", 0, obuflen, len buf, e.text()));
-	delta := array[3*4+len buf] of byte;
-	o := 0;
-	o = p32i(delta, o, 0); # start
-	o = p32i(delta, o, obuflen); # end
-	o = p32i(delta, o, len buf); # size
-	delta[o:] = buf;
-	return delta;
+	delta := bdiff->diff(obuf, buf);
+	return delta.pack();
 }
 
-Revlog.xstorebuf(rl: self ref Revlog, buf: array of byte, rev: int): (int, array of byte)
+deltasize(ents: array of ref Entry): int
 {
-	# xxx actually make the delta, return base != rev.
+	n := 0;
+	for(i := 0; i < len ents; i++)
+		n += ents[i].csize;
+	return n;
+}
+
+Revlog.xstorebuf(rl: self ref Revlog, buf: array of byte, nrev: int): (int, array of byte)
+{
+	prev := nrev-1;
+	if(prev >= 0) {
+		pe := rl.xfind(prev);
+		pbuf := xget(rl, pe, 1);
+		delta := bdiff->diff(pbuf, buf);
+		if(!delta.replaces(len buf)) {
+			dbuf := delta.pack();
+			compr := compress(dbuf);
+			if(len compr < len dbuf*90/100)
+				dbuf = compr;
+			if(deltasize(rl.ents[pe.base+1:nrev])+len dbuf < 2*len buf)
+				return (pe.base, dbuf);
+		}
+	}
 
 	compr := compress(buf);
-	if(len compr < len buf*90/100) {
-		return (rev, compr);
-	} else {
-		nbuf := array[1+len buf] of byte;
-		nbuf[0] = byte 'u';
-		nbuf[1:] = buf;
-		return (rev, nbuf);
-	}
+	if(len compr < len buf*90/100)
+		return (nrev, compr);
+
+	nbuf := array[1+len buf] of byte;
+	nbuf[0] = byte 'u';
+	nbuf[1:] = buf;
+	return (nrev, nbuf);
 }
 
 Revlog.xlength(rl: self ref Revlog, rev: int): big
@@ -1095,17 +1113,17 @@ xstreamin(r: ref Repo, b: ref Iobuf)
 
 xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
 {
-	warn("adding changesets");
+	sys->fprint(sys->fildes(2), "adding changesets\n");
 	cl := r.xchangelog();
 	nheads := len r.xheads();
 	nchangesets := cl.xstream(r, tr, b, 1, cl);
 	nnheads := len r.xheads()-nheads;
 
-	warn("adding manifests");
+	sys->fprint(sys->fildes(2), "adding manifests\n");
 	ml := r.xmanifestlog();
 	ml.xstream(r, tr, b, 0, cl);
 	
-	warn("adding file changes");
+	sys->fprint(sys->fildes(2), "adding file changes\n");
 	nfiles := 0;
 	nchanges := 0;
 	for(;;) {
@@ -1128,7 +1146,7 @@ xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
 			s = string nnheads;
 		msg += sprint(", %s heads", s);
 	}
-	warn(msg);
+	sys->fprint(sys->fildes(2), "%s\n", msg);
 }
 
 Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf: array of byte): ref Entry
@@ -1184,12 +1202,14 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 			error(sprint("%q: unexpected length %bd, expected %bd", dpath, dir.length, dsize));
 	}
 
-	uncsize := len buf;
-	base: int;
-	(base, buf) = rl.xstorebuf(buf, nrev);
+	(base, storebuf) := rl.xstorebuf(buf, nrev);
 
 	# if we grow a .i-only revlog to beyond 128k, create a .d and rewrite the .i
-	if(isindexonly(rl) && isize+big Entrysize+big len buf >= big (128*1024)) {
+	convert := isindexonly(rl) && isize+big Entrysize+big len storebuf >= big (128*1024);
+	if(convert && nrev == 0) {
+		rl.flags &= ~Indexonly;
+		tr.add(rl.rlpath+".d", big 0);
+	} else if(convert) {
 		say(sprint("no longer indexonly, writing %q", dpath));
 
 		ifd := xopen(ipath, Sys->OREAD);
@@ -1200,7 +1220,6 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 			error(sprint("short read on %q, expected %d, got %d", ipath, n, len ibuf));
 
 		nipath := ipath+".new";
-		r.xensuredirs(nipath);
 		nifd := xcreate(nipath, Sys->OWRITE|Sys->OEXCL, 8r666);
 		ib := bufio->fopen(nifd, Sys->OWRITE);
 
@@ -1221,14 +1240,14 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 			if(db.write(ibuf[ioff:ioff+e.csize], e.csize) != e.csize)
 				error(sprint("write %q: %r", dpath));
 
+			isize += big Entrysize;
 			dsize += big e.csize;
-			e.ioffset = big 0;
+			e.ioffset = e.offset;
 		}
-		isize = big (len rl.ents*Entrysize);
 		if(ib.flush() == Bufio->ERROR)
-			error(sprint("write %q: %r", ipath));
+			error(sprint("flush %q: %r", ipath));
 		if(db.flush() == Bufio->ERROR)
-			error(sprint("write %q: %r", dpath));
+			error(sprint("flush %q: %r", dpath));
 
 		# xxx styx cannot do this atomically...
 		say(sprint("removing current, renaming new, %q and %q", ipath, nipath));
@@ -1238,19 +1257,22 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 			error(sprint("remove %q and rename of %q failed: %r", ipath, nipath));
 
 		rl.flags &= ~Indexonly;
-		rl.ifd = rl.dfd = nil;
-		rl.bd = nil;
+		rl.ifd = xopen(ipath, Sys->OREAD);
+		rl.dfd = xopen(dpath, Sys->OREAD);
+		rl.bd = bufio->fopen(rl.dfd, Bufio->OREAD);
 
 		tr.add(rl.rlpath+".d", dsize);
 		tr.add(rl.rlpath+".i", isize);
 	}
 
-	ioffset := big 0;
+	ioffset: big;
 	if(isindexonly(rl))
 		ioffset = isize+big Entrysize;
+	else
+		ioffset = dsize;
 
 	flags := 0;
-	e := ref Entry (nrev, offset, ioffset, flags, len buf, uncsize, base, link, p1rev, p2rev, nodeid);
+	e := ref Entry (nrev, offset, ioffset, flags, len storebuf, len buf, base, link, p1rev, p2rev, nodeid);
 say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	ebuf := array[Entrysize] of byte;
 	e.xpack(ebuf, isindexonly(rl));
@@ -1258,6 +1280,14 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 	nents[:] = rl.ents;
 	nents[len rl.ents] = e;
 	rl.ents = nents;
+
+	ncache := array[len rl.cache+1] of array of byte;
+	ncache[:] = rl.cache;
+	rl.cache = ncache;
+
+	rl.full = buf;
+	rl.fullrev = e.rev;
+
 	rl.tab.add(e.nodeid, e);
 
 	r.xensuredirs(ipath);
@@ -1266,17 +1296,24 @@ say(sprint("revlog %q, will be adding %s", rl.path, e.text()));
 		error(sprint("write %q: %r", ipath));
 	isize += big Entrysize;
 	if(isindexonly(rl)) {
-		if(sys->pwrite(ifd, buf, len buf, isize) != len buf)
+		if(sys->pwrite(ifd, storebuf, len storebuf, isize) != len storebuf)
 			error(sprint("write %q: %r", ipath));
 	} else {
 		if(!tr.has(dpath))
 			tr.add(rl.rlpath+".d", dsize);
 		dfd := xopencreate(dpath, Sys->OWRITE, 8r666);
-		if(sys->pwrite(dfd, buf, len buf, dsize) != len buf)
+		if(sys->pwrite(dfd, storebuf, len storebuf, dsize) != len storebuf)
 			error(sprint("write %q: %r", dpath));
 	}
 
-	(ok, dir) := sys->fstat(ifd);
+	if(rl.ifd == nil)
+		rl.ifd = xopen(ipath, Sys->OREAD);
+	if(!isindexonly(rl) && rl.dfd == nil) {
+		rl.dfd = xopen(dpath, Sys->OREAD);
+		rl.bd = bufio->fopen(rl.dfd, Bufio->OREAD);
+	}
+
+	(ok, dir) := sys->fstat(rl.ifd);
 	if(ok == 0) {
 		rl.ilength = dir.length;
 		rl.imtime = dir.mtime;
@@ -1307,9 +1344,11 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 		if(!ischlog && cl.xfindnodeid(link, 0) == nil)
 			error(sprint("nodeid %s references unknown changelog link %s", rev, link));
 
-		p := Patch.xparse(delta);
-		say(sprint("\tpatch, sizediff %d", p.sizediff()));
-		say(sprint("\t%s", p.text()));
+		(d, err) := Delta.parse(delta);
+		if(err != nil)
+			error("parsing patch: "+err);
+		say(sprint("\tdelta, sizediff %d", d.sizediff()));
+		say(sprint("\t%s", d.text()));
 		
 		linkrev := -1;
 		if(!ischlog)
@@ -1319,13 +1358,13 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 			if(p1 != nullnode) {
 				buf = rl.xgetnodeid(p1);
 			} else {
-				if(len p.l != 1 || (c := hd p.l).start != 0 || c.end != 0)
+				if(!d.replaces(0))
 					error(sprint("first chunk is not full version"));
 				buf = array[0] of byte;
 			}
 		}
 
-		buf = p.apply(buf);
+		buf = d.apply(buf);
 
 		nodeid := xcreatenodeid(buf, p1, p2);
 		if(nodeid != rev)
@@ -1979,27 +2018,19 @@ Repo.xget(r: self ref Repo, revstr, path: string): array of byte
 	return rl.xgetnodeid(mf.nodeid);
 }
 
-xgetmanifest(r: ref Repo, n: string): ref Manifest
-{
-	if(n == nullnode)
-		return ref Manifest (n, array[0] of ref Mfile);
-	return r.xrevision(r.xlookup(n, 1).t0).t1;
-}
-
 Repo.xread(r: self ref Repo, path: string, ds: ref Dirstate): array of byte
 {
-	# xxx replace xgetmanifest with r.xmanifest when it accepts a nodeid
 	if(ds.context == nil)
 		ds.context = ref Context;
 
 	if(ds.context.m1 == nil)
-		ds.context.m1 = xgetmanifest(r, ds.p1);
+		ds.context.m1 = r.xmanifest(ds.p1);
 	mf1 := ds.context.m1.find(path);
 	if(mf1 != nil)
 		return r.xopenrevlog(path).xgetnodeid(mf1.nodeid);
 
 	if(ds.context.m2 == nil)
-		ds.context.m2 = xgetmanifest(r, ds.p2);
+		ds.context.m2 = r.xmanifest(ds.p2);
 	mf2 := ds.context.m2.find(path);
 	if(mf2 != nil)
 		return r.xopenrevlog(path).xgetnodeid(mf2.nodeid);
@@ -2063,184 +2094,6 @@ Dsfile.text(f: self ref Dsfile): string
 }
 
 
-Hunk.text(h: self ref Hunk): string
-{
-	#return sprint("<hunk s=%d e=%d length=%d buf=%q>", h.start, h.end, len h.buf, string h.buf);
-	return sprint("<hunk s=%d e=%d length=%d>", h.start, h.end, len h.buf);
-}
-
-Patch.apply(p: self ref Patch, b: array of byte): array of byte
-{
-	n := len b+p.sizediff();
-	d := array[n] of byte;
-	ae := be := 0;
-	for(l := p.l; l != nil; l = tl l) {
-		h := hd l;
-
-		# copy data before hunk from base to dest
-		d[be:] = b[ae:h.start];
-		be += h.start-ae;
-
-		# copy new data to dest, and skip the removed part from base
-		d[be:] = h.buf;
-		be += len h.buf;
-		ae = h.end;
-	}
-	# and the trailing common data
-	d[be:] = b[ae:];
-	return d;
-}
-
-Group: adt {
-	l:	list of array of byte;
-	length:	int;	# original length of group
-	o:	int;	# offset of hd l
-
-	add:	fn(g: self ref Group, buf: array of byte);
-	copy:	fn(g: self ref Group, sg: ref Group, s, e: int);
-	flatten:	fn(g: self ref Group): array of byte;
-	size:	fn(g: self ref Group): int;
-	apply:	fn(g: ref Group, p: ref Patch): ref Group;
-};
-
-Group.add(g: self ref Group, buf: array of byte)
-{
-	g.l = buf::g.l;
-	g.length += len buf;
-}
-
-Group.copy(g: self ref Group, sg: ref Group, s, e: int)
-{
-	# seek gs to s
-	drop := s-sg.o;
-	while(drop > 0) {
-		b := hd sg.l;
-		sg.l = tl sg.l;
-		if(drop >= len b) {
-			sg.o += len b;
-			drop -= len b;
-		} else {
-			sg.l = b[drop:]::sg.l;
-			sg.o += drop;
-			drop = 0;
-		}
-	}
-	if(sg.o != s) raise "group:bad0";
-
-	# copy from sg into g
-	n := e-s;
-	while(n > 0 && sg.l != nil) {
-		b := hd sg.l;
-		sg.l = tl sg.l;
-		take := len b;
-		if(take > n) {
-			take = n;
-			sg.l = b[take:]::sg.l;
-		}
-		g.add(b[:take]);
-		sg.o += take;
-		n -= take;
-	}
-	if(n != 0) raise "group:bad1";
-}
-
-# note: we destruct g (in Group.copy), keeping g.o & hd g.l in sync.
-# we never have to go back before an offset after having read it.
-Group.apply(g: ref Group, p: ref Patch): ref Group
-{
-	g = ref *g;
-	ng := ref Group (nil, 0, 0);
-	o := 0;
-	for(l := p.l; l != nil; l = tl l) {
-		h := hd l;
-		ng.copy(g, o, h.start);
-		ng.add(h.buf);
-		o = h.end;
-	}
-	ng.copy(g, o, g.size());
-	ng.l = util->rev(ng.l);
-	return ng;
-}
-
-Group.size(g: self ref Group): int
-{
-	return g.length;
-}
-
-Group.flatten(g: self ref Group): array of byte
-{
-	d := array[g.size()] of byte;
-	o := 0;
-	for(l := g.l; l != nil; l = tl l) {
-		d[o:] = hd l;
-		o += len hd l;
-	}
-	return d;
-}
-
-Patch.xapplymany(base: array of byte, patches: array of array of byte): array of byte
-{
-	if(len patches == 0)
-		return base;
-
-	g := ref Group (base::nil, len base, 0);
-	for(i := 0; i < len patches; i++) {
-		p := Patch.xparse(patches[i]);
-		{
-			g = Group.apply(g, p);
-		} exception e {
-		"group:*" =>
-			error("bad patch: "+e[len "group:":]);
-		}
-	}
-	return g.flatten();
-}
-
-Patch.sizediff(p: self ref Patch): int
-{
-	n := 0;
-	for(l := p.l; l != nil; l = tl l) {
-		h := hd l;
-		n += len h.buf - (h.end-h.start);
-	}
-	return n;
-}
-
-Patch.xparse(d: array of byte): ref Patch
-{
-	o := 0;
-	l: list of ref Hunk;
-	while(o+12 <= len d) {
-		start, end, length: int;
-		(start, o) = g32(d, o);
-		(end, o) = g32(d, o);
-		(length, o) = g32(d, o);
-		if(start > end)
-			error(sprint("bad data, start %d > end %d", start, end));
-		if(o+length > len d)
-			error(sprint("bad data, hunk points past buffer, o+length %d+%d > len d %d", o, length, len d));
-		buf := array[length] of byte;
-		buf[:] = d[o:o+length];
-
-		h := ref Hunk (start, end, buf);
-		if(l != nil && h.start < (hd l).end)
-			error(sprint("bad patch, hunk starts before preceding hunk, start %d < end %d", h.start, (hd l).end));
-		l = h::l;
-		o += length;
-	}
-	return ref Patch(util->rev(l));
-}
-
-Patch.text(p: self ref Patch): string
-{
-	s: string;
-	for(l := p.l; l != nil; l = tl l)
-		s += sprint(" %s", (hd l).text());
-	if(s != nil)
-		s = s[1:];
-	return s;
-}
-
 nullentry: Entry;
 
 Entry.xpack(e: self ref Entry, buf: array of byte, indexonly: int)
@@ -2285,12 +2138,12 @@ Entry.xparse(buf: array of byte, index: int): ref Entry
 	(e.offset, o) = g48(buf, o);
 	e.ioffset = e.offset;
 	(e.flags, o) = g16(buf, o);
-	(e.csize, o) = g32(buf, o);
-	(e.uncsize, o) = g32(buf, o);
-	(e.base, o) = g32(buf, o);
-	(e.link, o) = g32(buf, o);
-	(e.p1, o) = g32(buf, o);
-	(e.p2, o) = g32(buf, o);
+	(e.csize, o) = g32i(buf, o);
+	(e.uncsize, o) = g32i(buf, o);
+	(e.base, o) = g32i(buf, o);
+	(e.link, o) = g32i(buf, o);
+	(e.p1, o) = g32i(buf, o);
+	(e.p2, o) = g32i(buf, o);
 	e.nodeid = hex(buf[o:o+20]);
 	o += 20;
 	if(len buf-o != 12)
@@ -2385,16 +2238,6 @@ hex(d: array of byte): string
 		r[i++] = hexchar(b & byte 15);
 	}
 	return string r;
-}
-
-g16(d: array of byte, o: int): (int, int)
-{
-	return (int d[o]<<8|int d[o+1], o+2);
-}
-
-g32(d: array of byte, o: int): (int, int)
-{
-	return (g16(d, o).t0<<16|g16(d, o+2).t0, o+4);
 }
 
 g48(d: array of byte, o: int): (big, int)

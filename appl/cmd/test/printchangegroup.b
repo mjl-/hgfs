@@ -15,7 +15,10 @@ include "encoding.m";
 include "tables.m";
 include "mercurial.m";
 	hg: Mercurial;
-	Dirstate, Dsfile, Revlog, Repo, Change, Patch, Hunk: import hg;
+	Dirstate, Dsfile, Revlog, Repo, Change: import hg;
+include "../../lib/bdiff.m";
+	bdiff: Bdiff;
+	Delta, Patch: import bdiff;
 
 HgPrintchangegroup: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -28,7 +31,7 @@ b: ref Iobuf;
 
 Chunk: adt {
 	n, p1, p2, link:	string;
-	p:	ref Patch;
+	d:	ref Delta;
 };
 
 init(nil: ref Draw->Context, args: list of string)
@@ -40,6 +43,8 @@ init(nil: ref Draw->Context, args: list of string)
 	base16 = load Encoding Encoding->BASE16PATH;
 	hg = load Mercurial Mercurial->PATH;
 	hg->init(0);
+	bdiff = load Bdiff Bdiff->PATH;
+	bdiff->init();
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dv]");
@@ -90,13 +95,14 @@ printchunk(c: ref Chunk)
 	sys->print("\tp2:    %q\n", c.p2);
 	sys->print("\tlink:  %q\n", c.link);
 	if(vflag) {
-		sys->print("\thunks:\n");
-		for(l := c.p.l; l != nil; l = tl l) {
-			h := hd l;
-			sys->print("\t\tstart=%d end=%d length=%d buf:\n%s\n\n", h.start, h.end, len h.buf, string h.buf);
+		sys->print("\tpatches:\n");
+		for(l := c.d.l; l != nil; l = tl l) {
+			p := hd l;
+			sys->print("\t\t%s\n", p.text());
+			sys->print("\t\t%s\n", string p.d);
 		}
 	} else {
-		sys->print("\thunks: %d\n", len c.p.l);
+		sys->print("\tpatches: %d\n", len c.d.l);
 	}
 	sys->print("\n");
 }
@@ -140,8 +146,10 @@ readchunk(): ref Chunk
 		o += 20;
 		c.link = hg->hex(buf[o:o+20]);
 		o += 20;
-		p := Patch.xparse(buf[o:]);
-		c.p = p;
+		(d, err) := Delta.parse(buf[o:]);
+		if(err != nil)
+			fail("parsing patch: "+err);
+		c.d = d;
 	} exception x {
 	"hg:*" =>
 		fail("parsing patch: "+x[3:]);

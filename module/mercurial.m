@@ -259,23 +259,4 @@ Mercurial: module
 		get:	fn(c: self ref Configs, sec, name: string): string;
 		find:	fn(c: self ref Configs, sec, name: string): (int, string);
 	};
-
-
-	Hunk: adt {
-		start,
-		end:	int;
-		buf:	array of byte;
-
-		text:	fn(h: self ref Hunk): string;
-	};
-
-	Patch: adt {
-		l:	list of ref Hunk;
-
-		xparse:	fn(d: array of byte): ref Patch;
-		apply:	fn(p: self ref Patch, d: array of byte): array of byte;
-		xapplymany:	fn(base: array of byte, patches: array of array of byte): array of byte;
-		sizediff:	fn(h: self ref Patch): int;
-		text:	fn(h: self ref Patch): string;
-	};
 };

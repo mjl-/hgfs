@@ -4,10 +4,12 @@ TARG=\
 	mercurial.dis\
 	mercurialwire.dis\
 	mercurialremote.dis\
+	bdiff.dis\
 
 MODULES=\
 	mercurialwire.m\
 	mercurialremote.m\
+	bdiff.m\
 
 SYSMODULES=\
 	mercurial.m\

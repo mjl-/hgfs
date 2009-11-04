@@ -2,10 +2,16 @@
 
 TARG=\
 	delta.dis\
-	printpatch.dis\
-	printchangegroup.dis\
-	testapply.dis\
 	printconfig.dis\
+	printdelta.dis\
+	applydelta.dis\
+	mkdelta.dis\
+	printchangegroup.dis\
+
+MODULES=\
+	../../lib/mercurialwire.m\
+	../../lib/mercurialremote.m\
+	../../lib/bdiff.m\
 
 SYSMODULES=\
 	mercurial.m\

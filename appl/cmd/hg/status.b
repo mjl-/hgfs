@@ -57,7 +57,7 @@ init0(args: list of string)
 	ds := hg->xdirstate(repo, 1);
 
 	# first print status for all known files
-	a := l2a(ds.enumerate(repo.xworkdir(), args, 1, 1).t1);
+	a := l2a(ds.enumerate(".", args, 1, 1).t1);
 	inssort(a, statepathge);
 	for(i := 0; i < len a; i++) {
 		f := a[i];

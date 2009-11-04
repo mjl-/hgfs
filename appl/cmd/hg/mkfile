@@ -20,6 +20,7 @@ TARG=\
 
 MODULES=\
 	../../lib/mercurialremote.m\
+	../../lib/bdiff.m\
 
 SYSMODULES=\
 	mercurial.m\
