@@ -21,6 +21,7 @@ include "filter.m";
 	deflate: Filter;
 include "filtertool.m";
 	filtertool: Filtertool;
+include "../../lib/bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Transact, Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;
@@ -75,9 +76,12 @@ init(nil: ref Draw->Context, args: list of string)
 	{ init0(args); }
 	exception e {
 	"hg:*" =>
-		if(tr != nil)
+		warn(e[3:]);
+		if(tr != nil) {
+			warn("rolling back...");
 			repo.xrollback(tr);
-		fail(e[3:]);
+		}
+		raise "fail:"+e[3:];
 	}
 }
 
@@ -166,7 +170,7 @@ init0(args: list of string)
 			continue;
 
 		say(sprint("adding to revlog for file %#q, fp1 %s, fp2 %s", path, fp1, fp2));
-		ne := rl.xappend(repo, tr, nodeid, fp1, fp2, link, buf);
+		ne := rl.xappend(repo, tr, nodeid, fp1, fp2, link, buf, nil, nil, nil);
 		filenodeids[i] = ne.nodeid;
 		say(sprint("file now at nodeid %s", ne.nodeid));
 
@@ -184,7 +188,7 @@ init0(args: list of string)
 	mbuf := m.xpack();
 	mnodeid := hg->xcreatenodeid(mbuf, m1.nodeid, m2.nodeid);
 	if(ml.xfindnodeid(mnodeid, 0) == nil)
-		ml.xappend(repo, tr, mnodeid, m1.nodeid, m2.nodeid, link, mbuf);
+		ml.xappend(repo, tr, mnodeid, m1.nodeid, m2.nodeid, link, mbuf, nil, nil, nil);
 
 	say("adding to changelog");
 	cl := repo.xchangelog();
@@ -194,7 +198,7 @@ init0(args: list of string)
 	cbuf := array of byte cmsg;
 	cnodeid := hg->xcreatenodeid(cbuf, ds.p1, ds.p2);
 	nheads := len repo.xheads();
-	ce := cl.xappend(repo, tr, cnodeid, ds.p1, ds.p2, link, cbuf);
+	ce := cl.xappend(repo, tr, cnodeid, ds.p1, ds.p2, link, cbuf, nil, nil, nil);
 	nnheads := len repo.xheads()-nheads;
 
 	nds.p1 = ce.nodeid;

@@ -13,12 +13,12 @@ include "string.m";
 include "encoding.m";
 	base16: Encoding;
 include "tables.m";
-include "mercurial.m";
-	hg: Mercurial;
-	Dirstate, Dsfile, Revlog, Repo, Change: import hg;
 include "../../lib/bdiff.m";
 	bdiff: Bdiff;
 	Delta, Patch: import bdiff;
+include "mercurial.m";
+	hg: Mercurial;
+	Dirstate, Dsfile, Revlog, Repo, Change: import hg;
 
 HgPrintchangegroup: module {
 	init:	fn(nil: ref Draw->Context, args: list of string);
@@ -41,10 +41,10 @@ init(nil: ref Draw->Context, args: list of string)
 	str = load String String->PATH;
 	bufio = load Bufio Bufio->PATH;
 	base16 = load Encoding Encoding->BASE16PATH;
-	hg = load Mercurial Mercurial->PATH;
-	hg->init(0);
 	bdiff = load Bdiff Bdiff->PATH;
 	bdiff->init();
+	hg = load Mercurial Mercurial->PATH;
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-dv]");

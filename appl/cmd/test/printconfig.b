@@ -7,6 +7,7 @@ include "draw.m";
 include "arg.m";
 include "bufio.m";
 include "tables.m";
+include "../../lib/bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Configs, Config, Section, Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry: import hg;

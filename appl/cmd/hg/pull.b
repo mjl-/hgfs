@@ -21,6 +21,7 @@ include "tables.m";
 include "util0.m";
 	util: Util0;
 	max, g32i, hex, hasstr, rev, join, prefix, suffix, readfd, l2a, inssort, warn, fail: import util;
+include "../../lib/bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Configs: import hg;

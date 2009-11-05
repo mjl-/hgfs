@@ -20,6 +20,7 @@ include "mhttp.m";
 include "util0.m";
 	util: Util0;
 	droptl, hasstr, rev, join, prefix, suffix, readfd, l2a, inssort, warn, fail: import util;
+include "bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Dirstate, Dsfile, Revlog, Repo, Change, Manifest, Mfile, Entry, Config: import hg;

@@ -169,13 +169,13 @@ Mercurial: module
 		xfind:		fn(rl: self ref Revlog, rev: int): ref Entry;
 		xfindnodeid:	fn(rl: self ref Revlog, n: string, need: int): ref Entry;
 		xdelta:		fn(rl: self ref Revlog, prev, rev: int): array of byte;
-		xstorebuf:	fn(rl: self ref Revlog, buf: array of byte, rev: int): (int, array of byte);
+		xstorebuf:	fn(rl: self ref Revlog, buf: array of byte, rev: int, pbuf, delta: array of byte, d: ref Bdiff->Delta): (int, array of byte);
 		xpread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): array of byte;
 		xlength:	fn(rl: self ref Revlog, rev: int): big;
 
 		xentries:	fn(rl: self ref Revlog): array of ref Entry;
 		isindexonly:	fn(rl: self ref Revlog): int;
-		xappend:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf: array of byte): ref Entry;
+		xappend:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf, pbuf, delta: array of byte, d: ref Bdiff->Delta): ref Entry;
 		xstream:	fn(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio->Iobuf, ischlog: int, cl: ref Revlog): int;
 	};
 

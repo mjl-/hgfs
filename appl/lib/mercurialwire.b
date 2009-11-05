@@ -18,6 +18,7 @@ include "filtertool.m";
 include "util0.m";
 	util: Util0;
 	join, l2a, rev: import util;
+include "bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change, Manifest: import hg;

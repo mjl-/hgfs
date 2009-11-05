@@ -27,6 +27,7 @@ include "tables.m";
 include "util0.m";
 	util: Util0;
 	min, fail, warn, l2a, kill, killgrp, suffix: import util;
+include "../../lib/bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Branch, Tag, Revlog, Repo, Entry, Change, Manifest, Mfile: import hg;

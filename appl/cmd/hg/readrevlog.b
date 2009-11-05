@@ -9,6 +9,7 @@ include "bufio.m";
 include "string.m";
 	str: String;
 include "tables.m";
+include "../../lib/bdiff.m";
 include "mercurial.m";
 	hg: Mercurial;
 	Revlog, Repo, Entry, Change: import hg;

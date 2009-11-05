@@ -5,7 +5,7 @@ include "sys.m";
 	sprint: import sys;
 include "util0.m";
 	util: Util0;
-	g32i, rev, eq, p32i, max: import util;
+	g32i, rev, p32i, max: import util;
 include "bdiff.m";
 
 init()
@@ -226,7 +226,9 @@ Line: adt {
 	hash,
 	s,
 	e,
-	i:	int;
+	n,
+	i,
+	eq:	int;
 };
 
 State: adt {
@@ -250,13 +252,13 @@ diff(a, b: array of byte): ref Delta
 	for(s := 0; s < ea && s < eb ; s++) {
 		l0 := la[s];
 		l1 := lb[s];
-		if(l0.hash != l1.hash || l0.e != l1.e || !eq(a[l0.s:l0.e], b[l0.s:l0.e]))
+		if(l0.hash != l1.hash || l0.n != l1.n || !eq(a, b, l0.s, l1.s, l0.n))
 			break;
 	}
 	while(ea > s && eb > s) {
 		l0 := la[--ea];
 		l1 := lb[--eb];
-		if(l0.hash != l1.hash || l0.e-l0.s != l1.e-l1.s || !eq(a[l0.s:l0.e], b[l1.s:l1.e])) {
+		if(l0.hash != l1.hash || l0.n != l1.n || !eq(a, b, l0.s, l1.s, l0.n)) {
 			ea++;
 			eb++;
 			break;
@@ -287,13 +289,13 @@ bounds(d: array of byte): array of ref Line
 		c := int d[i];
 		h = (h<<5)+h+c;
 		if(c == '\n') {
-			l = ref Line (h&16r7fffffff, s, i+1, nl++)::l;
+			l = ref Line (h&16r7fffffff, s, i+1, (i+1)-s, nl++, -1)::l;
 			s = i+1;
 			h = 5381;
 		}
 	}
 	if(s < i)
-		l = ref Line (h&16r7fffffff, s, i, nl)::l;
+		l = ref Line (h&16r7fffffff, s, i, i-s, nl, -1)::l;
 	return l2arev(l);
 }
 
@@ -304,6 +306,22 @@ l2arev[T](l: list of T): array of T
 	for(; l != nil; l = tl l)
 		a[i--] = hd l;
 	return a;
+}
+
+same(st: ref State, l0, l1: ref Line): int
+{
+	m := eq(st.a, st.b, l0.s, l1.s, l0.n);
+	if(m)
+		l1.eq = l0.i;
+	return m;
+}
+
+eq(a, b: array of byte, i, j, n: int): int
+{
+	while(n--)
+		if(a[i++] != b[j++])
+			return 0;
+	return 1;
 }
 
 # find large(st) common substring (whole lines),
@@ -350,8 +368,10 @@ diff0(st: ref State, sa, sb: int, ea, eb: int)
 
 		for(l := st.tab[l1.hash%len st.tab]; l != nil; l = tl l) {
 			s0 := hd l;
-			s1 := l1;
 			ia := s0.i;
+			if(ia < sa || ia >= ea)
+				continue; # not looking here
+			s1 := l1;
 			ib := s1.i;
 			if(ia >= msa && ia < mea && ib >= msb && ib < meb)
 				continue; # line part of longest match so far
@@ -359,13 +379,16 @@ diff0(st: ref State, sa, sb: int, ea, eb: int)
 				continue; # no longer match possible with this line
 			nlength := 0;
 			for(;;) {
-				if(ia < sa || ia >= ea || ib < sb || ib >= eb)
+				if(ia >= ea || ib >= eb)
 					break;
 				l0 := st.la[ia];
 				l1 = st.lb[ib];
-				if(l0.hash != l1.hash || l1.e-l1.s != l0.e-l0.s || !eq(st.a[l0.s:l0.e], st.b[l1.s:l1.e]))
+				if(l1.eq != l0.i &&
+					(l0.hash != l1.hash
+					 || l0.n != l1.n
+					 || !same(st, l0, l1)))
 					break;
-				nlength += l1.e-l1.s;
+				nlength += l1.n;
 				ia++;
 				ib++;
 			}

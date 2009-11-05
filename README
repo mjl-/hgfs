@@ -49,8 +49,6 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
   has that file and it has the same contents.  for "remove", don't
   complain if new revision has that file removed.  for "update", check
   if new revision has same data for file.
-- for abort while in write transaction, for truncates to zero length,
-  remove the files instead.
 - for dirstate, handle needmerge more like modified?  i.e. verify
   that it really changed, especially during commit.
 - for commit,update,etc, handle dirstate with p1 & p2 (merge).

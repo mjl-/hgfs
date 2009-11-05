@@ -1015,20 +1015,28 @@ deltasize(ents: array of ref Entry): int
 	return n;
 }
 
-Revlog.xstorebuf(rl: self ref Revlog, buf: array of byte, nrev: int): (int, array of byte)
+Revlog.xstorebuf(rl: self ref Revlog, buf: array of byte, nrev: int, pbuf, delta: array of byte, d: ref Delta): (int, array of byte)
 {
 	prev := nrev-1;
 	if(prev >= 0) {
 		pe := rl.xfind(prev);
-		pbuf := xget(rl, pe, 1);
-		delta := bdiff->diff(pbuf, buf);
-		if(!delta.replaces(len buf)) {
-			dbuf := delta.pack();
-			compr := compress(dbuf);
-			if(len compr < len dbuf*90/100)
-				dbuf = compr;
-			if(deltasize(rl.ents[pe.base+1:nrev])+len dbuf < 2*len buf)
-				return (pe.base, dbuf);
+		if(pbuf == nil)
+			pbuf = xget(rl, pe, 1);
+
+		# see if the patch we got (if any) is useful.  if not, create our own
+		if(delta == nil || d == nil || d.replaces(len pbuf)) {
+			d = bdiff->diff(pbuf, buf);
+			delta = nil;
+		}
+
+		if(!d.replaces(len pbuf)) {
+			if(delta == nil)
+				delta = d.pack();
+			compr := compress(delta);
+			if(len compr < len delta*90/100)
+				delta = compr;
+			if(deltasize(rl.ents[pe.base+1:nrev])+len delta < 2*len buf)
+				return (pe.base, delta);
 		}
 	}
 
@@ -1106,6 +1114,7 @@ xstreamin(r: ref Repo, b: ref Iobuf)
 		r.xcommit(tr);
 	} exception {
 	"hg:*" =>
+		sys->fprint(sys->fildes(2), "error, rolling back...\n");
 		r.xrollback(tr);
 		raise;
 	}
@@ -1149,7 +1158,7 @@ xstreamin0(r: ref Repo, tr: ref Transact, b: ref Iobuf)
 	sys->fprint(sys->fildes(2), "%s\n", msg);
 }
 
-Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf: array of byte): ref Entry
+Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p2: string, link: int, buf, pbuf, delta: array of byte, d: ref Delta): ref Entry
 {
 	if(readonly)
 		error("repository opened readonly");
@@ -1202,7 +1211,7 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 			error(sprint("%q: unexpected length %bd, expected %bd", dpath, dir.length, dsize));
 	}
 
-	(base, storebuf) := rl.xstorebuf(buf, nrev);
+	(base, storebuf) := rl.xstorebuf(buf, nrev, pbuf, delta, d);
 
 	# if we grow a .i-only revlog to beyond 128k, create a .d and rewrite the .i
 	convert := isindexonly(rl) && isize+big Entrysize+big len storebuf >= big (128*1024);
@@ -1354,6 +1363,7 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 		if(!ischlog)
 			linkrev = cl.xfindnodeid(link, 1).rev;
 
+		pbuf := buf;
 		if(buf == nil) {
 			if(p1 != nullnode) {
 				buf = rl.xgetnodeid(p1);
@@ -1373,7 +1383,7 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 		if(rl.xfindnodeid(nodeid, 0) != nil)
 			continue;
 
-		rl.xappend(r, tr, nodeid, p1, p2, linkrev, buf);
+		rl.xappend(r, tr, nodeid, p1, p2, linkrev, buf, pbuf, delta, d);
 		nchanges++;
 	}
 	return nchanges;
@@ -2371,8 +2381,13 @@ Repo.xrollback(r: self ref Repo, tr: ref Transact)
 			continue;
 		dir.length = rs.off;
 		f := storedir+"/"+rs.path;
-		if(sys->wstat(f, dir) != 0 && err == nil)
-			err = sprint("rollback %q to %bd", rs.path, rs.off);
+		if(rs.off == big 0) {
+			if(sys->remove(f) != 0 && err == nil)
+				err = sprint("rollback %q to %bd (remove)", f, rs.off);
+		} else {
+			if(sys->wstat(f, dir) != 0 && err == nil)
+				err = sprint("rollback %q to %bd", rs.path, rs.off);
+		} 
 	}
 	f := r.storedir()+"/undo";
 	if(sys->remove(f) != 0 && err == nil)

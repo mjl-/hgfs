@@ -25,8 +25,7 @@ init(nil: ref Draw->Context, args: list of string)
 	util = load Util0 Util0->PATH;
 	util->init();
 	bdiff = load Bdiff Bdiff->PATH;
-	if(bdiff == nil)
-		fail(sprint("load Bdiff %q: %r", Bdiff->PATH));
+	bdiff->init();
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] file1 file2");
