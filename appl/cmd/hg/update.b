@@ -74,27 +74,23 @@ init0(revstr: string)
 
 	onodeid := ds.p1;
 	(orev, nil) := repo.xlookup(onodeid, 1);
-	say(sprint("current rev %d nodeid %q", orev, onodeid));
 
-	(rev, nodeid) := repo.xlookup(revstr, 1);
-	say(sprint("new rev %d nodeid %q, revstr %q", rev, nodeid, revstr));
+	(nrev, nnodeid) := repo.xlookup(revstr, 1);
+	say(sprint("new rev %d nodeid %q, revstr %q", nrev, nnodeid, revstr));
 
-	(oc, om) := repo.xrevision(orev);
+	(oc, om) := repo.xrevisionn(onodeid);
 	(nil, obranch) := oc.findextra("branch");
-
-	nbranch: string;
-	nm := repo.xmanifest(nodeid);
-	if(nodeid != hg->nullnode) {
-		(nc, nil) := repo.xrevision(rev);
-		(nil, nbranch) = nc.findextra("branch");
-	}
+	(nc, nm) := repo.xrevisionn(nnodeid);
+	(nil, nbranch) := nc.findextra("branch");
 
 	wbranch := repo.xworkbranch();
 	if(obranch == nil) obranch = "default";
 	if(nbranch == nil) nbranch = "default";
+	say(sprint("obranch %q, nbranch %q, wbranch %q", obranch, nbranch, wbranch));
 
 	ofiles := om.files;
 	nfiles := nm.files;
+	say(sprint("len ofiles %d, len nfiles %d", len ofiles, len nfiles));
 
 	dsf := l2a(ds.l);
 	for(i := 0; i < len dsf; i++) {
@@ -117,7 +113,7 @@ init0(revstr: string)
 	}
 
 	nupdated := nmerged := nremoved := nunresolved := 0;
-	nds := ref Dirstate (1, nodeid, hg->nullnode, nil, nil);
+	nds := ref Dirstate (1, nnodeid, hg->nullnode, nil, nil);
 	oi := ni := 0;
 	for(;;) {
 		if(oi < len ofiles)
@@ -187,7 +183,7 @@ exists(e: string): int
 ewritefile(path: string, nodeid: string)
 {
 	rl := repo.xopenrevlog(path);
-	buf := rl.xgetnodeid(nodeid);
+	buf := rl.xgetn(nodeid);
 
 	s := ".";
 	for(l := sys->tokenize(path, "/").t1; len l > 1; l = tl l) {

@@ -164,10 +164,10 @@ Mercurial: module
 
 		xopen:		fn(storedir, path: string, cacheall: int): ref Revlog;
 		xget:		fn(rl: self ref Revlog, rev: int): array of byte;
-		xgetnodeid:	fn(rl: self ref Revlog, n: string): array of byte;
+		xgetn:		fn(rl: self ref Revlog, n: string): array of byte;
 		xlastrev:	fn(rl: self ref Revlog): int;
 		xfind:		fn(rl: self ref Revlog, rev: int): ref Entry;
-		xfindnodeid:	fn(rl: self ref Revlog, n: string, need: int): ref Entry;
+		xfindn:		fn(rl: self ref Revlog, n: string, need: int): ref Entry;
 		xdelta:		fn(rl: self ref Revlog, prev, rev: int): array of byte;
 		xstorebuf:	fn(rl: self ref Revlog, buf: array of byte, rev: int, pbuf, delta: array of byte, d: ref Bdiff->Delta): (int, array of byte);
 		xpread:		fn(rl: self ref Revlog, rev: int, n: int, off: big): array of byte;
@@ -200,7 +200,7 @@ Mercurial: module
 		xfind:		fn(path: string): ref Repo;
 		xopenrevlog:	fn(r: self ref Repo, path: string): ref Revlog;
 		xrevision:	fn(r: self ref Repo, rev: int): (ref Change, ref Manifest);
-		xmanifest:	fn(r: self ref Repo, n: string): ref Manifest;
+		xrevisionn:	fn(r: self ref Repo, n: string): (ref Change, ref Manifest);
 		xlastrev:	fn(r: self ref Repo): int;
 		xchange:	fn(r: self ref Repo, rev: int): ref Change;
 		xchangen:	fn(r: self ref Repo, n: string): ref Change;

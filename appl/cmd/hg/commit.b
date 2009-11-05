@@ -110,8 +110,8 @@ init0(args: list of string)
 	ochrev := repo.xlastrev();
 	link := ochrev+1;
 
-	m1 := repo.xmanifest(ds.p1);
-	m2 := repo.xmanifest(ds.p2);
+	(nil, m1) := repo.xrevisionn(ds.p1);
+	(nil, m2) := repo.xrevisionn(ds.p2);
 	m := manifestmerge(m1, m2);
 
 	say(sprint("newrev and link is %d, changes p1 %s p2 %s, manifest p1 %s p2 %s", link, ds.p1, ds.p2, m1.nodeid, m2.nodeid));
@@ -166,7 +166,7 @@ init0(args: list of string)
 		rl := repo.xopenrevlog(path);
 
 		nodeid := hg->xcreatenodeid(buf, fp1, fp2);
-		if(rl.xfindnodeid(nodeid, 0) != nil)
+		if(rl.xfindn(nodeid, 0) != nil)
 			continue;
 
 		say(sprint("adding to revlog for file %#q, fp1 %s, fp2 %s", path, fp1, fp2));
@@ -187,7 +187,7 @@ init0(args: list of string)
 	ml := repo.xmanifestlog();
 	mbuf := m.xpack();
 	mnodeid := hg->xcreatenodeid(mbuf, m1.nodeid, m2.nodeid);
-	if(ml.xfindnodeid(mnodeid, 0) == nil)
+	if(ml.xfindn(mnodeid, 0) == nil)
 		ml.xappend(repo, tr, mnodeid, m1.nodeid, m2.nodeid, link, mbuf, nil, nil, nil);
 
 	say("adding to changelog");

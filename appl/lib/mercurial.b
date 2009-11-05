@@ -121,7 +121,7 @@ differs(repo: ref Repo, mf: ref Mfile): int
 
 	{
 		rl := repo.xopenrevlog(mf.path);
-		e := rl.xfindnodeid(mf.nodeid, 1);
+		e := rl.xfindn(mf.nodeid, 1);
 		p1 := p2 := nullnode;
 		if(e.p1 >= 0) {
 			p1 = rl.xfind(e.p1).nodeid;
@@ -243,7 +243,7 @@ xentrylogtext(r: ref Repo, n: string, verbose: int): string
 	ents := cl.xentries();
 	rev := p1 := p2 := -1;
 	if(n != nullnode) {
-		e := cl.xfindnodeid(n, 1);
+		e := cl.xfindn(n, 1);
 		rev = e.rev;
 		p1 = e.p1;
 		p2 = e.p2;
@@ -322,6 +322,7 @@ xbopencreate(f: string, mode, perm: int): ref Iobuf
 
 xdirstate(r: ref Repo, all: int): ref Dirstate
 {
+say("xdirstate");
 	path := r.path+"/dirstate";
 	b := bufio->open(path, Bufio->OREAD);
 	if(b == nil)
@@ -382,6 +383,7 @@ xdirstate(r: ref Repo, all: int): ref Dirstate
 			if(dsf.state != STremove)
 				dsf.missing = 1;
 		} else {
+			# say(sprint("xdirstate, checking path %q, state %d, size %d (length %bd), mtime %d (%d)", dsf.path, dsf.state, dsf.size, dir.length, dsf.mtime, dir.mtime));
 			case dsf.state {
 			STremove or
 			STadd or
@@ -391,7 +393,7 @@ xdirstate(r: ref Repo, all: int): ref Dirstate
 				if(dsf.size >= 0 && big dsf.size != dir.length) {
 					dsf.mtime = dir.mtime;
 					dsf.size = SZdirty;
-				} else if(dsf.size == SZcheck || dsf.mtime != now || dsf.mtime >= now-4) {
+				} else if(dsf.size == SZcheck ||  dsf.mtime >= now-4) {
 					exp := r.xread(dsf.path, ds);
 					cur := xreadfile(f);
 					if(eq(exp, cur))
@@ -410,6 +412,7 @@ xdirstate(r: ref Repo, all: int): ref Dirstate
 	if(all)
 		xdirstatewalk(root, "", ds, tab);
 	ds.l = util->rev(ds.l);
+say("xdirstate done");
 	return ds;
 }
 
@@ -976,9 +979,9 @@ Revlog.xget(rl: self ref Revlog, rev: int): array of byte
 	return xget(rl, e, 0);
 }
 
-Revlog.xgetnodeid(rl: self ref Revlog, n: string): array of byte
+Revlog.xgetn(rl: self ref Revlog, n: string): array of byte
 {
-	e := rl.xfindnodeid(n, 1);
+	e := rl.xfindn(n, 1);
 	return rl.xget(e.rev);
 }
 
@@ -1072,7 +1075,7 @@ Revlog.xfind(rl: self ref Revlog, rev: int): ref Entry
 }
 
 
-Revlog.xfindnodeid(rl: self ref Revlog, n: string, need: int): ref Entry
+Revlog.xfindn(rl: self ref Revlog, n: string, need: int): ref Entry
 {
 	xreopen(rl);
 	e := rl.tab.find(n);
@@ -1167,9 +1170,9 @@ Revlog.xappend(rl: self ref Revlog, r: ref Repo, tr: ref Transact, nodeid, p1, p
 
 	p1rev := p2rev := -1;
 	if(p1 != nullnode)
-		p1rev = rl.xfindnodeid(p1, 1).rev;
+		p1rev = rl.xfindn(p1, 1).rev;
 	if(p2 != nullnode)
-		p2rev = rl.xfindnodeid(p2, 1).rev;
+		p2rev = rl.xfindn(p2, 1).rev;
 
 	ipath := rl.path+".i";
 	dpath := rl.path+".d";
@@ -1350,7 +1353,7 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 
 		if(ischlog && rev != link)
 			error(sprint("changelog entry %s with bogus link %s", rev, link));
-		if(!ischlog && cl.xfindnodeid(link, 0) == nil)
+		if(!ischlog && cl.xfindn(link, 0) == nil)
 			error(sprint("nodeid %s references unknown changelog link %s", rev, link));
 
 		(d, err) := Delta.parse(delta);
@@ -1361,12 +1364,12 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 		
 		linkrev := -1;
 		if(!ischlog)
-			linkrev = cl.xfindnodeid(link, 1).rev;
+			linkrev = cl.xfindn(link, 1).rev;
 
 		pbuf := buf;
 		if(buf == nil) {
 			if(p1 != nullnode) {
-				buf = rl.xgetnodeid(p1);
+				buf = rl.xgetn(p1);
 			} else {
 				if(!d.replaces(0))
 					error(sprint("first chunk is not full version"));
@@ -1380,7 +1383,7 @@ Revlog.xstream(rl: self ref Revlog, r: ref Repo, tr: ref Transact, b: ref Bufio-
 		if(nodeid != rev)
 			error(sprint("nodeid mismatch, expected %s saw %s", rev, nodeid));
 
-		if(rl.xfindnodeid(nodeid, 0) != nil)
+		if(rl.xfindn(nodeid, 0) != nil)
 			continue;
 
 		rl.xappend(r, tr, nodeid, p1, p2, linkrev, buf, pbuf, delta, d);
@@ -1528,26 +1531,21 @@ Repo.xopenrevlog(r: self ref Repo, path: string): ref Revlog
 
 Repo.xrevision(r: self ref Repo, rev: int): (ref Change, ref Manifest)
 {
-	say("repo.manifest");
-	cl := r.xchangelog();
-	ce := cl.xfind(rev);
-	cd := cl.xget(rev);
-	c := Change.xparse(cd, ce);
-	ml := r.xmanifestlog();
-	md := ml.xgetnodeid(c.manifestnodeid);
-	m := Manifest.xparse(md, c.manifestnodeid);
-	return (c, m);
+say("repo.xrevision");
+	n := r.xchangelog().xfind(rev).nodeid;
+	return r.xrevisionn(n);
 }
 
-Repo.xmanifest(r: self ref Repo, n: string): ref Manifest
+Repo.xrevisionn(r: self ref Repo, n: string): (ref Change, ref Manifest)
 {
-	if(n == nullnode)
-		return ref Manifest (n, array[0] of ref Mfile);
-	rev := r.xlookup(n, 1).t0;
-	c := r.xchange(rev);
-	ml := r.xmanifestlog();
-	md := ml.xgetnodeid(c.manifestnodeid);
-	return Manifest.xparse(md, c.manifestnodeid);
+	c := r.xchangen(n);
+	m := ref Manifest (nullnode, array[0] of ref Mfile);
+	if(c.manifestnodeid != nullnode) {
+		ml := r.xmanifestlog();
+		mbuf := ml.xgetn(c.manifestnodeid);
+		m = Manifest.xparse(mbuf, c.manifestnodeid);
+	}
+	return (c, m);
 }
 
 Repo.xlastrev(r: self ref Repo): int
@@ -1568,7 +1566,7 @@ Repo.xchangen(r: self ref Repo, n: string): ref Change
 	if(n == nullnode)
 		return ref Change (-1, n, -1, -1, nullnode, "", 0, 0, nil, nil, nil);
 	cl := r.xchangelog();
-	ce := cl.xfindnodeid(n, 1);
+	ce := cl.xfindn(n, 1);
 	cd := cl.xget(ce.rev);
 	return Change.xparse(cd, ce);
 }
@@ -1758,13 +1756,17 @@ Repo.xtags(r: self ref Repo): list of ref Tag
 {
 	tags: list of ref Tag;
 	tagtab := Strhash[ref Tag].new(31, nil);
-	for(l := r.xheads(); l != nil; l = tl l) {
+	l := r.xheads();
+	if(l == nil)
+		return nil;
+	rlt := r.xopenrevlog(".hgtags");
+	for(; l != nil; l = tl l) {
 		n := hd l;
-		m := r.xmanifest(n);
+		(nil, m) := r.xrevisionn(n);
 		mf := m.find(".hgtags");
 		if(mf == nil)
 			continue;
-		buf := r.xget(mf.nodeid, ".hgtags");
+		buf := rlt.xgetn(mf.nodeid);
 		for(ll := xparsetags(r, string buf); ll != nil; ll = tl ll) {
 			t := hd ll;
 			if(tagtab.find(t.name) == nil) {
@@ -1785,6 +1787,7 @@ Repo.xrevtags(r: self ref Repo, revstr: string): list of ref Tag
 	ents := cl.xentries();
 
 	el: list of ref Entry;
+	if(rev != -1)
 	for(i := 0; i < len ents; i++) {
 		e := ents[i];
 		if(e.p1 == rev || e.p2 == rev)
@@ -1832,7 +1835,7 @@ xparsetags(r: ref Repo, s: string): list of ref Tag
 		name := hd tl t;
 		n := hd t;
 		xchecknodeid(n);
-		e := cl.xfindnodeid(n, 1);
+		e := cl.xfindn(n, 1);
 		l = ref Tag (name, n, e.rev)::l;
 	}
 	return util->rev(l);
@@ -1854,22 +1857,23 @@ branchupdate(l: list of ref Branch, branch: string, e: ref Entry): list of ref B
 
 Repo.xbranches(r: self ref Repo): list of ref Branch
 {
-say("repo.branches");
+say("repo.xbranches");
 	path := r.path+"/branch.cache";
-	b := bufio->open(path, Bufio->OREAD);
-	# b nil is okay, we're sure not to read from it if so below
+	br := bufio->open(path, Bufio->OREAD);
+	# br nil is okay, we're sure not to read from it if so below
 
 	cl := r.xchangelog();
 
 	# first line has nodeid+revision of tip.  used for seeing if the cache is up to date.
-	l: list of ref Branch;
+	branches: list of ref Branch;
+	branchtab := Strhash[ref Branch].new(13, nil);
 	i := 0;
 	lastcacherev := 0;
 	for(;; i++) {
-		if(b == nil)
+		if(br == nil)
 			break;
 
-		s := b.gets('\n');
+		s := br.gets('\n');
 		if(s == nil)
 			break;
 		if(s[len s-1] != '\n')
@@ -1887,29 +1891,58 @@ say("repo.branches");
 		name := hd tl toks;
 		n := hd toks;
 		xchecknodeid(n);
-		e := cl.xfindnodeid(n, 1);
-		l = ref Branch (name, n, e.rev)::l;
+		e := cl.xfindn(n, 1);
+		if(branchtab.find(name) != nil)
+			error(sprint("duplicate branch name %#q", name));
+		b := ref Branch (name, n, e.rev);
+		branches = b::branches;
+		branchtab.add(b.name, b);
 	}
 
-	# for missing branch entries, read the changelog
+	# read the changelog for entries not in the cache
 	lrev := r.xlastrev();
+	new := lastcacherev < lrev;
 	for(lastcacherev++; lastcacherev <= lrev; lastcacherev++) {
 		c := r.xchange(lastcacherev);
-		(nil, v) := c.findextra("branch");
-		say(sprint("branch in rev %d: %q", lastcacherev, v));
-		if(v != nil) {
-			ce := cl.xfind(lastcacherev);
-			l = branchupdate(l, v, ce);
+		(nil, name) := c.findextra("branch");
+		if(name == nil)
+			name = "default";
+		b := branchtab.find(name);
+		if(b == nil) {
+			b = ref Branch (name, c.nodeid, c.rev);
+			branchtab.add(name, b);
+			branches = b::branches;
+		} else {
+			b.n = c.nodeid;
+			b.rev = c.rev;
 		}
 	}
 
 	# if no branches, fake one
-	if(l == nil && len cl.ents > 0) {
+	if(branches == nil && len cl.ents > 0) {
 		rev := cl.xlastrev();
 		e := cl.xfind(rev);
-		l = ref Branch ("default", e.nodeid, e.rev)::l;
+		branches = ref Branch ("default", e.nodeid, e.rev)::nil;
 	}
-	return util->rev(l);
+
+	if(!readonly && new && len cl.ents > 0) {
+		fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
+		if(fd == nil) {
+			warn(sprint("create %q: %r", path));
+		} else {
+			ee := cl.ents[len cl.ents-1];
+			s := sprint("%s %d\n", ee.nodeid, ee.rev);
+			for(l := branches; l != nil; l = tl l) {
+				b := hd l;
+				s += sprint("%s %s\n", b.n, b.name);
+			}
+			buf := array of byte s;
+			if(sys->write(fd, buf, len buf) != len buf)
+				warn(sprint("writing new %q: %r", path));
+		}
+	}
+
+	return branches;
 }
 
 Repo.xheads(r: self ref Repo): list of string
@@ -1981,7 +2014,7 @@ Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 	if(len s == 40) {
 		err := checknodeid(s);
 		if(err == nil) {
-			e := cl.xfindnodeid(s, 0);
+			e := cl.xfindn(s, 0);
 			if(e == nil) {
 				if(need)
 					error("no such nodeid "+s);
@@ -2019,13 +2052,12 @@ Repo.xlookup(r: self ref Repo, s: string, need: int): (int, string)
 
 Repo.xget(r: self ref Repo, revstr, path: string): array of byte
 {
-	(rev, nil) := r.xlookup(revstr, 1);
-	(nil, m) := r.xrevision(rev);
+	(nil, m) := r.xrevisionn(revstr);
 	mf := m.find(path);
 	if(mf == nil)
 		error(sprint("file %#q not in revision %q", path, revstr));
 	rl := r.xopenrevlog(path);
-	return rl.xgetnodeid(mf.nodeid);
+	return rl.xgetn(mf.nodeid);
 }
 
 Repo.xread(r: self ref Repo, path: string, ds: ref Dirstate): array of byte
@@ -2034,16 +2066,16 @@ Repo.xread(r: self ref Repo, path: string, ds: ref Dirstate): array of byte
 		ds.context = ref Context;
 
 	if(ds.context.m1 == nil)
-		ds.context.m1 = r.xmanifest(ds.p1);
+		(nil, ds.context.m1) = r.xrevisionn(ds.p1);
 	mf1 := ds.context.m1.find(path);
 	if(mf1 != nil)
-		return r.xopenrevlog(path).xgetnodeid(mf1.nodeid);
+		return r.xopenrevlog(path).xgetn(mf1.nodeid);
 
 	if(ds.context.m2 == nil)
-		ds.context.m2 = r.xmanifest(ds.p2);
+		(nil, ds.context.m2) = r.xrevisionn(ds.p2);
 	mf2 := ds.context.m2.find(path);
 	if(mf2 != nil)
-		return r.xopenrevlog(path).xgetnodeid(mf2.nodeid);
+		return r.xopenrevlog(path).xgetn(mf2.nodeid);
 
 	error(sprint("%q does not exist in parents", path));
 	return nil; # not reached

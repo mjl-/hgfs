@@ -74,7 +74,7 @@ init0()
 		file := m.files[i];
 		say(sprint("reading file %q, nodeid %q", file.path, file.nodeid));
 		rl := repo.xopenrevlog(file.path);
-		d := rl.xgetnodeid(file.nodeid);
+		d := rl.xgetn(file.nodeid);
 		say("file read...");
 		warn(sprint("%q, %q: %d bytes\n", file.nodeid, file.path, len d));
 

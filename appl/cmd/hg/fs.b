@@ -1152,7 +1152,7 @@ Revtree.walk(r: self ref Revtree, gen: int, name: string): (ref Sys->Dir, string
 filerev(rl: ref Revlog, f: ref File.Plain): int
 {
 	if(f.rev < 0) {
-		e := rl.xfindnodeid(f.nodeid, 1);
+		e := rl.xfindn(f.nodeid, 1);
 		f.rev = e.rev;
 	}
 	return f.rev;
@@ -1266,7 +1266,7 @@ Tgz.read(t: self ref Tgz, n: int, off: big): array of byte
 				say(sprint("tgz.read, starting on next file, %q", f.path));
 
 				rl := openrevlog(f.path);
-				e := rl.xfindnodeid(f.nodeid, 1);
+				e := rl.xfindn(f.nodeid, 1);
 				mtime := repo.xmtime(rl, e.rev);
 				d := rl.xget(e.rev);
 
