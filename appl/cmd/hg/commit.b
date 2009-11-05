@@ -37,6 +37,7 @@ HgCommit: module {
 dflag: int;
 vflag: int;
 repo: ref Repo;
+repobase: string;
 hgpath := "";
 msg: string;
 tr: ref Transact;
@@ -89,21 +90,24 @@ init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
 	root := repo.workroot();
+	repobase = repo.xworkdir();
 
 	user := hg->xreaduser(repo);
 	now := daytime->now();
 	tzoff := daytime->local(now).tzoff;
 	say(sprint("have user %q, now %d, tzoff %d", user, now, tzoff));
 
-	ds := hg->xdirstate(repo, 0);
+	untracked := 0;
+	ds := hg->xdirstate(repo, untracked);
 
-	r: list of ref Dsfile;
 	pathtab := Strhash[ref Dsfile].new(31, nil);
-	if(args == nil)
-		r = inspect(r, ds.l, pathtab, nil);
-	else
-		for(; args != nil; args = tl args)
-			r = inspect(r, ds.findall(hd args, 0), pathtab, hd args);
+	l := ds.all();
+	if(args != nil) {
+		erroutside := 1;
+		paths := hg->xpathseval(root, repobase, args, erroutside);
+		(nil, l) = ds.enumerate(paths, untracked, 1);
+	}
+	r := inspect(l, pathtab, args!=nil);
 	if(r == nil)
 		error("no changes");
 
@@ -208,14 +212,17 @@ init0(args: list of string)
 		warn("created new head");
 }
 
-inspect(r, l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], path: string): list of ref Dsfile
+inspect(l: list of ref Dsfile, tab: ref Strhash[ref Dsfile], relative: int): list of ref Dsfile
 {
-	n := 0;
+	r: list of ref Dsfile;
 	for(; l != nil; l = tl l) {
 		dsf := hd l;
 		if(tab.find(dsf.path) != nil)
 			continue;
 say("inspect: "+dsf.text());
+		path := dsf.path;
+		if(relative)
+			path = hg->relpath(repobase, path);
 		case dsf.state {
 		hg->STuntracked =>
 			continue;
@@ -223,19 +230,16 @@ say("inspect: "+dsf.text());
 		hg->STneedmerge =>
 			if(dsf.state == hg->STnormal && dsf.size >= 0)
 				continue;
-			warn(sprint("M %q", dsf.path));
+			warn(sprint("M %q", path));
 		hg->STremove =>
-			warn(sprint("R %q", dsf.path));
+			warn(sprint("R %q", path));
 		hg->STadd =>
-			warn(sprint("A %q", dsf.path));
+			warn(sprint("A %q", path));
 		}
 
 		tab.add(dsf.path, dsf);
 		r = dsf::r;
-		n++;
 	}
-	if(n == 0 && path != nil)
-		warn(sprint("%q: no matches", path));
 	return r;
 }
 

@@ -40,7 +40,7 @@ init(nil: ref Draw->Context, args: list of string)
 	util = load Util0 Util0->PATH;
 	util->init();
 	hg = load Mercurial Mercurial->PATH;
-	hg->init(1);
+	hg->init(0);
 
 	arg->init(args);
 	arg->setusage(arg->progname()+" [-d] [-h path] [path ...]");
@@ -62,10 +62,17 @@ init(nil: ref Draw->Context, args: list of string)
 init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
-	ds := hg->xdirstate(repo, 0);
+	untracked := 0;
+	ds := hg->xdirstate(repo, untracked);
 	root := repo.workroot();
+	base := repo.xworkdir();
 
-	(nil, l) := ds.enumerate(repo.xworkdir(), args, 0, 1);
+	l := ds.all();
+	if(args != nil) {
+		erroutside := 0;
+		paths := hg->xpathseval(root, base, args, erroutside);
+		(nil, l) = ds.enumerate(paths, untracked, 1);
+	}
 	for(; l != nil; l = tl l) {
 		dsf := hd l;
 		path := dsf.path;

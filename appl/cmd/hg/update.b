@@ -28,6 +28,8 @@ dflag: int;
 Cflag: int;
 repo: ref Repo;
 hgpath := "";
+reporoot: string;
+repobase: string;
 
 init(nil: ref Draw->Context, args: list of string)
 {
@@ -66,14 +68,16 @@ init(nil: ref Draw->Context, args: list of string)
 init0(revstr: string)
 {
 	repo = Repo.xfind(hgpath);
-	ds := hg->xdirstate(repo, 0);
+	reporoot = repo.workroot();
+	repobase = repo.xworkdir();
+	untracked := 0;
+	ds := hg->xdirstate(repo, untracked);
 	if(revstr == nil)
 		revstr = repo.xworkbranch();
 	if(ds.p1 != hg->nullnode && ds.p2 != hg->nullnode && !Cflag)
 		error("in merge, refusing to update without -C");
 
 	onodeid := ds.p1;
-	(orev, nil) := repo.xlookup(onodeid, 1);
 
 	(nrev, nnodeid) := repo.xlookup(revstr, 1);
 	say(sprint("new rev %d nodeid %q, revstr %q", nrev, nnodeid, revstr));
@@ -134,8 +138,9 @@ init0(revstr: string)
 			oi++;
 			ni++;
 		} else if(op != nil && op < np || np == nil) {
-			say(sprint("removing %q", op));
-			sys->remove(op);
+			f := reporoot+"/"+op;
+			say(sprint("removing %q", f));
+			sys->remove(f);
 			removedirs(nfiles, op);
 			nremoved++;
 			oi++;
@@ -162,7 +167,8 @@ removedirs(mf: array of ref Mfile, p: string)
 	if(a == nil || mfhasprefix(mf, a))
 		return;
 	a = a[:len a-1];
-	sys->remove(a);
+	f := reporoot+"/"+a;
+	sys->remove(f);
 	removedirs(mf, a);
 }
 
@@ -185,24 +191,21 @@ ewritefile(path: string, nodeid: string)
 	rl := repo.xopenrevlog(path);
 	buf := rl.xgetn(nodeid);
 
-	s := ".";
-	for(l := sys->tokenize(path, "/").t1; len l > 1; l = tl l) {
-		s += "/"+hd l;
-		sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR);
-	}
-
-	fd := sys->create(path, Sys->OWRITE|Sys->OTRUNC, 8r666);
+	hg->ensuredirs(reporoot, path);
+	f := reporoot+"/"+path;
+	fd := sys->create(f, Sys->OWRITE|Sys->OTRUNC, 8r666);
 	if(fd == nil)
-		error(sprint("create %q: %r", path));
+		error(sprint("create %q: %r", f));
 	if(sys->write(fd, buf, len buf) != len buf)
-		error(sprint("write %q: %r", path));
+		error(sprint("write %q: %r", f));
 }
 
 dsadd(ds: ref Dirstate, path: string)
 {
-	(ok, dir) := sys->stat(path);
+	f := reporoot+"/"+path;
+	(ok, dir) := sys->stat(f);
 	if(ok < 0)
-		error(sprint("stat %q: %r", path));
+		error(sprint("stat %q: %r", f));
 	dsf := ref Dsfile (hg->STnormal, dir.mode&8r777, int dir.length, dir.mtime, path, nil, 0);
 	ds.add(dsf);
 }

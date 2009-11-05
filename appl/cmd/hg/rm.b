@@ -70,11 +70,16 @@ dirty: int;
 init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
-	ds := hg->xdirstate(repo, 0);
+	untracked := 0;
+	ds := hg->xdirstate(repo, untracked);
 	root := repo.workroot();
+	base := repo.xworkdir();
 
 	now := daytime->now();
-	for(l := ds.enumerate(repo.xworkdir(), args, 0, 1).t1; l != nil; l = tl l) {
+	erroutside := 0;
+	paths := hg->xpathseval(root, base, args, erroutside);
+	(nil, l) := ds.enumerate(paths, untracked, 1);
+	for(; l != nil; l = tl l) {
 		f := hd l;
 		p := f.path;
 
@@ -90,7 +95,7 @@ init0(args: list of string)
 			f.size = hg->SZdirty;
 			f.mtime = now;
 			ds.dirty++;
-			if(sys->remove(hg->xsanitize(root+"/"+p)) != 0)
+			if(sys->remove(root+"/"+p) != 0)
 				warn(sprint("removing %q: %r", p));
 		hg->STadd =>
 			if(fflag) {

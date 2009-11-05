@@ -25,7 +25,7 @@ include "tables.m";
 	Strhash: import tables;
 include "util0.m";
 	util: Util0;
-	g16, g32i, eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
+	join, g16, g32i, eq, hasstr, p32, p32i, p16, stripws, prefix, suffix, rev, max, l2a, readfile, writefile: import util;
 include "bdiff.m";
 	bdiff: Bdiff;
 	Delta: import bdiff;
@@ -160,7 +160,13 @@ escape(s: string): string
 
 xsanitize(s: string): string
 {
-	slash := str->prefix("/", s);
+	pre: string;
+	if(str->prefix("/", s))
+		pre = "/";
+	else if(str->prefix("#", s)) {
+		(pre, s) = str->splitstrl(s, "/");
+		pre += "/";
+	}
 	r: list of string;
 	for(l := sys->tokenize(s, "/").t1; l != nil; l = tl l)
 		case hd l {
@@ -177,20 +183,25 @@ xsanitize(s: string): string
 		s += "/"+hd l;
 	if(s != nil)
 		s = s[1:];
-	if(slash)
-		s = "/"+s;
+	if(pre != nil)
+		s = pre+s;
 	if(s == nil)
 		s = ".";
 	return s;
 }
 
-ensuredirs(base, path: string)
+# root is of repo, we won't write outside it
+# path is a sanitized plain file (no ".." or ".").
+# we create dirs so the file "path" can be created.
+ensuredirs(root, path: string)
 {
-	s := base;
-	(ok, dir) := sys->stat(base+"/"+str->splitstrr(path, "/").t0);
-	if(ok == 0 && (dir.mode & Sys->DMDIR))
-		return;
-	for(l := sys->tokenize(str->splitstrr(path, "/").t0, "/").t1; l != nil; l = tl l) {
+	dir := str->splitstrr(path, "/").t0;
+	(ok, nil) := sys->stat(root+"/"+dir);
+	if(ok == 0)
+		return;  # doesn't help to check if it's a dir
+
+	s := root;
+	for(l := sys->tokenize(dir, "/").t1; l != nil; l = tl l) {
 		s += "/"+hd l;
 		if(sys->create(s, Sys->OREAD, 8r777|Sys->DMDIR) == nil)
 			say(sprint("create %q failed: %r", s));
@@ -320,7 +331,7 @@ xbopencreate(f: string, mode, perm: int): ref Iobuf
 	return b;
 }
 
-xdirstate(r: ref Repo, all: int): ref Dirstate
+xdirstate(r: ref Repo, untracked: int): ref Dirstate
 {
 say("xdirstate");
 	path := r.path+"/dirstate";
@@ -409,7 +420,7 @@ say("xdirstate");
 		ds.l = dsf::ds.l;
 	}
 
-	if(all)
+	if(untracked)
 		xdirstatewalk(root, "", ds, tab);
 	ds.l = util->rev(ds.l);
 say("xdirstate done");
@@ -453,6 +464,63 @@ say(sprint("xdirstatewalk, untracked file %q", npath));
 	}
 }
 
+# turn "l", list of paths (from command-line usually) into repository paths given repo "root" and current dir "base".
+# a path may be absolute, in that case root & base are not used.  the resulting path should still be in the repository.
+xpathseval(root, base: string, l: list of string, erroutside: int): list of string
+{
+	paths: list of string;
+	for(; l != nil; l = tl l) {
+		p := patheval(root, base, hd l);
+		if(p == nil) {
+			err := sprint("%#q outside repository", hd l);
+			if(erroutside)
+				error(err);
+			warn(err);
+		} else
+			paths = p::paths;
+	}
+	return rev(paths);
+}
+
+patheval(root, base, p: string): string
+{
+	s: string;
+	if(p != nil && (p[0] == '/' || p[0] == '#'))
+		s = p;
+	else
+		s = root+"/"+base+"/"+p;
+	s = xsanitize(s);
+	if(!str->prefix(root+"/", s) && s != root)
+		return nil;
+	s = str->drop(s[len root:], "/");
+	if(s == nil)
+		s = ".";
+	return s;
+}
+
+# "base" is the repo work dir, no leading or trailing slashes, no "." or ".." in path.
+# "p" is a sanitized path in the repo, rooted at "base".
+# we return the relative path to p when in base.
+# e.g. base "some/dir", p "other/file", we return "../../other/file"
+relpath(base, p: string): string
+{
+	if(base == nil || base == ".")
+		return p;
+	bb := sys->tokenize(base, "/").t1;
+	pp := sys->tokenize(p, "/").t1;
+	while(bb != nil && pp != nil && hd bb == hd pp) {
+		bb = tl bb;
+		pp = tl pp;
+	}
+	base = join(bb, "/");
+	p = join(pp, "/");
+	n := sys->tokenize(base, "/").t0;
+	s := "";
+	while(n-- > 0)
+		s += "../";
+	s = s+p;
+	return s;
+}
 
 getline(b: ref Iobuf): string
 {
@@ -1422,7 +1490,8 @@ Repo.xopen(path: string): ref Repo
 		error(sprint("stat %q: %r", namepath));
 	name := dir.name;
 
-	repo := ref Repo (path, requires, name, -1, -1, nil, nil);
+	workpath := sys->fd2path(xopen(path+"/..", Sys->OREAD));
+	repo := ref Repo (path, workpath, requires, name, -1, -1, nil, nil);
 	if(repo.isstore() && !isdir(path+"/store"))
 		error("missing directory \".hg/store\"");
 	if(!repo.isstore() && !isdir(path+"/data"))
@@ -1434,7 +1503,7 @@ Repo.xopen(path: string): ref Repo
 Repo.xfind(path: string): ref Repo
 {
 	if(path == nil)
-		path = workdir();
+		path = sys->fd2path(xopen(".", Sys->OREAD));
 
 	while(path != nil) {
 		while(path != nil && path[len path-1] == '/')
@@ -1646,20 +1715,18 @@ Dirstate.findall(ds: self ref Dirstate, pp: string, untracked: int): list of ref
 	return rev(r);
 }
 
-Dirstate.enumerate(ds: self ref Dirstate, base: string, paths: list of string, untracked, vflag: int): (list of string, list of ref Dsfile)
+Dirstate.all(ds: self ref Dirstate): list of ref Dsfile
 {
-	if(paths == nil) {
-		l := ds.findall(base, untracked);
-		if(l == nil)
-			return (base::nil, nil);
-		return (nil, l);
-	}
+	return ds.l;
+}
 
+Dirstate.enumerate(ds: self ref Dirstate, paths: list of string, untracked, vflag: int): (list of string, list of ref Dsfile)
+{
 	tab := Strhash[ref Dsfile].new(101, nil);
 	r: list of ref Dsfile;
 	nomatch: list of string;
 	for(; paths != nil; paths = tl paths) {
-		p := base+"/"+hd paths;
+		p := hd paths;
 		n := 0;
 		for(l := ds.findall(p, untracked); l != nil; l = tl l) {
 			dsf := hd l;
@@ -1734,17 +1801,25 @@ Repo.xwriteworkbranch(r: self ref Repo, branch: string)
 		error(err);
 }
 
+# no ending slash
 Repo.workroot(r: self ref Repo): string
 {
-	return r.path[:len r.path-len "/.hg"];
+	return r.workpath;
 }
 
+# nil if path is outside repo
+Repo.patheval(r: self ref Repo, base, p: string): string
+{
+	return patheval(r.workroot(), base, p);
+}
+
+# no leading & no ending slash.  relative to root.
 Repo.xworkdir(r: self ref Repo): string
 {
 	root := r.workroot();
 	cwd := sys->fd2path(sys->open(".", Sys->OREAD));
 	if(!str->prefix(root, cwd))
-		error(sprint("cannot determine current directory in repository, workroot %q, cwd %q", root, cwd));
+		return ".";
 	base := cwd[len root:];
 	base = str->drop(base, "/");
 	if(base == nil)
@@ -2304,14 +2379,6 @@ isdir(path: string): int
 {
 	(ok, dir) := sys->stat(path);
 	return ok == 0 && dir.mode & Sys->DMDIR;
-}
-
-workdir(): string
-{
-	fd := sys->open(".", Sys->OREAD);
-	if(fd == nil)
-		return nil;
-	return sys->fd2path(fd);
 }
 
 breadn(b: ref Iobuf, buf: array of byte, e: int): int

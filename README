@@ -39,9 +39,6 @@ mechiel lukkien, reachable at mechiel@ueber.net or mechiel@xs4all.nl.
 
 # todo
 
-- hg/status (and others probably): fix handling of paths, e.g.
-  "hg/status" in dir1/ should list all changes in the repo, "hg/status ."
-  in dir1/ should list only those in dir1/.
 - hg/mv, hg/cp, hg/push, hg/merge, hg/rollback, hg/bundle, hg/unbundle
 - hg/update: for local modifications (as returned by hg/status),
   only refuse to update if their state is actually different from

@@ -62,45 +62,41 @@ init(nil: ref Draw->Context, args: list of string)
 init0(args: list of string)
 {
 	repo = Repo.xfind(hgpath);
-	ds := hg->xdirstate(repo, 0);
-	root := repo.workroot();
+	untracked := 0;
+	ds := hg->xdirstate(repo, untracked);
+	base := repo.xworkdir();
 
 	if(args == nil) {
-		add(ds, root, ".", 0);
+		diradd(ds, ".");
 	} else {
-		base := repo.xworkdir();
-		say(sprint("base %q", base));
-		for(l := args; l != nil; l = tl l)
-			add(ds, root, hg->xsanitize(base+"/"+hd l), 1);
+		for(l := args; l != nil; l = tl l) {
+			p := repo.patheval(base, hd l);
+			if(p == nil)
+				error(sprint("%q is outside repository", hd l));
+			(ok, dir) := sys->stat(repo.workroot()+"/"+p);
+			if(ok != 0) {
+				warn(sprint("%q: %r", p));
+				continue;
+			}
+			add(ds, p, dir, 1);
+		}
 	}
 
 	if(ds.dirty)
 		repo.xwritedirstate(ds);
 }
 
-add(ds: ref Dirstate, root, path: string, direct: int)
-{
-	(ok, dir) := sys->stat(root+"/"+path);
-	if(ok != 0)
-		return warn(sprint("%q: %r", path));
-	add0(ds, root, path, dir, direct);
-}
-
-add0(ds: ref Dirstate, root, path: string, dir: Sys->Dir, direct: int)
+add(ds: ref Dirstate, path: string, dir: Sys->Dir, direct: int)
 {
 	if(path == ".hg" || str->prefix(".hg/", path))
 		return;
 	if(dir.mode & Sys->DMDIR)
-		return diradd(ds, root, path);
+		return diradd(ds, path);
 
 	dsf := ds.find(path);
-	if(dsf == nil || dsf.state == hg->STuntracked) {
-		add := dsf == nil;
-		if(dsf == nil)
-			dsf = ref Dsfile;
-		*dsf = Dsfile (hg->STadd, dir.mode&8r777, int dir.length, dir.mtime, path, nil, 0);
-		if(add)
-			ds.add(dsf);
+	if(dsf == nil) {
+		dsf = ref Dsfile (hg->STadd, dir.mode&8r777, int dir.length, dir.mtime, path, nil, 0);
+		ds.add(dsf);
 		if(!direct)
 			warn(sprint("%q", path));
 		ds.dirty++;
@@ -108,14 +104,14 @@ add0(ds: ref Dirstate, root, path: string, dir: Sys->Dir, direct: int)
 		warn(sprint("%q already tracked", path));
 }
 
-diradd(ds: ref Dirstate, root, path: string)
+diradd(ds: ref Dirstate, path: string)
 {
-	(dirs, ok) := readdir->init(root+"/"+path, Readdir->NAME);
+	(dirs, ok) := readdir->init(repo.workroot()+"/"+path, Readdir->NAME);
 	if(ok < 0)
 		return warn(sprint("reading %q: %r", path));
 	for(i := 0; i < len dirs; i++)
 		if(dirs[i].name != ".hg")
-			add0(ds, root, hg->xsanitize(path+"/"+dirs[i].name), *dirs[i], 0);
+			add(ds, hg->xsanitize(path+"/"+dirs[i].name), *dirs[i], 0);
 }
 
 error(s: string)

@@ -22,9 +22,11 @@ Mercurial: module
 	xentrylogtext:	fn(r: ref Repo, n: string, verbose: int): string;
 	xopencreate:	fn(f: string, mode, perm: int): ref Sys->FD;
 	xbopencreate:	fn(f: string, mode, perm: int): ref Bufio->Iobuf;
-	xdirstate:	fn(r: ref Repo, all: int): ref Dirstate;
+	xdirstate:	fn(r: ref Repo, untracked: int): ref Dirstate;
 	xparsetags:	fn(r: ref Repo, s: string): list of ref Tag;
 	xstreamin:	fn(r: ref Repo, b: ref Bufio->Iobuf);
+	xpathseval:	fn(root, base: string, l: list of string, erroutside: int): list of string;
+	relpath:	fn(base, p: string): string;
 
 	Entrysize:	con 64;
 
@@ -96,7 +98,8 @@ Mercurial: module
 		pack:	fn(e: self ref Dirstate, buf: array of byte);
 		find:	fn(d: self ref Dirstate, path: string): ref Dsfile;
 		findall:	fn(d: self ref Dirstate, pp: string, untracked: int): list of ref Dsfile;
-		enumerate:	fn(d: self ref Dirstate, base: string, paths: list of string, untracked, vflag: int): (list of string, list of ref Dsfile);
+		all:		fn(d: self ref Dirstate): list of ref Dsfile;
+		enumerate:	fn(d: self ref Dirstate, paths: list of string, untracked, vflag: int): (list of string, list of ref Dsfile);
 		add:	fn(d: self ref Dirstate, dsf: ref Dsfile);
 		del:	fn(d: self ref Dirstate, path: string);
 		haschanges:	fn(d: self ref Dirstate): int;
@@ -180,7 +183,8 @@ Mercurial: module
 	};
 
 	Repo: adt {
-		path:	string;
+		path:	string;	# of .hg dir
+		workpath:	string; # of work root, ".." in repo.path
 		requires:	list of string;
 		reponame: 	string;
 		lastrevision:	int;
@@ -195,6 +199,7 @@ Mercurial: module
 		storedir:	fn(r: self ref Repo): string;
 		isstore:	fn(r: self ref Repo): int;
 		isrevlogv1:	fn(r: self ref Repo): int;
+		patheval:	fn(r: self ref Repo, base, path: string): string;
 
 		xopen:		fn(path: string): ref Repo;
 		xfind:		fn(path: string): ref Repo;

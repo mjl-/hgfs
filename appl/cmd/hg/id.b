@@ -60,7 +60,8 @@ init(nil: ref Draw->Context, args: list of string)
 init0()
 {
 	repo := Repo.xfind(hgpath);
-	ds := hg->xdirstate(repo, 0);
+	untracked := 0;
+	ds := hg->xdirstate(repo, untracked);
 
 	branch := repo.xworkbranch();
 	tags := repo.xrevtags(ds.p1);

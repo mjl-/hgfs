@@ -56,12 +56,13 @@ init(nil: ref Draw->Context, args: list of string)
 init0(args: list of string)
 {
 	repo := Repo.xfind(hgpath);
+	root := repo.workroot();
 	base := repo.xworkdir();
 
-	l := args;
-	args = nil;
-	for(; l != nil; l = tl l)
-		args = hg->xsanitize(base+"/"+hd l)::args;
+	if(args != nil) {
+		untracked := 0;
+		args = hg->xpathseval(root, base, args, untracked);
+	}
 
 	if(revstr != nil) {
 		(rev, n) := repo.xlookup(revstr, 1);

@@ -55,30 +55,41 @@ init(nil: ref Draw->Context, args: list of string)
 init0(args: list of string)
 {
 	repo := Repo.xfind(hgpath);
-	ds := hg->xdirstate(repo, 1);
+	untracked := 1;
+	ds := hg->xdirstate(repo, untracked);
+	root := repo.workroot();
+	base := repo.xworkdir();
 
-	# first print status for all known files
-	a := l2a(ds.enumerate(".", args, 1, 1).t1);
+	l := ds.all();
+	if(args != nil) {
+		erroutside := 0;
+		paths := hg->xpathseval(root, base, args, erroutside);
+		(nil, l) = ds.enumerate(paths, untracked, 1);
+	}
+	a := l2a(l);
 	inssort(a, statepathge);
 	for(i := 0; i < len a; i++) {
 		f := a[i];
 say("dsf "+f.text());
+		path := f.path;
+		if(args != nil)
+			path = hg->relpath(base, path);
 		if(f.missing) {
-			sys->print("! %q\n", f.path);
+			sys->print("! %q\n", path);
 			continue;
 		}
 		case f.state {
 		hg->STneedmerge =>
-			sys->print("M %q\n", f.path);
+			sys->print("M %q\n", path);
 		hg->STremove =>
-			sys->print("R %q\n", f.path);
+			sys->print("R %q\n", path);
 		hg->STadd =>
-			sys->print("A %q\n", f.path);
+			sys->print("A %q\n", path);
 		hg->STnormal =>
 			if(f.size < 0)
-				sys->print("M %q\n", f.path);
+				sys->print("M %q\n", path);
 		hg->STuntracked =>
-			sys->print("? %q\n", f.path);
+			sys->print("? %q\n", path);
 		* =>
 			raise "missing case";
 		}
